@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from folder_report import NO_EXTENSION, format_size, render_text, scan_folder
+from folder_report import NO_EXTENSION, build_parser, format_size, render_text, scan_folder
 
 
 class ScanFolderTests(unittest.TestCase):
@@ -54,6 +54,41 @@ class ScanFolderTests(unittest.TestCase):
             self.assertEqual(default_report.size, 1)
             self.assertEqual(complete_report.files, 4)
             self.assertEqual(complete_report.size, 10)
+
+    def test_excludes_file_patterns_and_directory_names_from_all_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.txt").write_bytes(b"123")
+            (root / "app.log").write_bytes(b"12345")
+
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "debug.log").write_bytes(b"1234567")
+            (nested / "keep.bin").write_bytes(b"12")
+
+            dependency_directory = nested / "node_modules"
+            dependency_directory.mkdir()
+            (dependency_directory / "package.bin").write_bytes(b"123456789")
+
+            report = scan_folder(root, exclude=["*.log", "node_modules"])
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 5)
+            self.assertEqual(
+                [(item.extension, item.files, item.size) for item in report.extensions],
+                [(".bin", 1, 2), (".txt", 1, 3)],
+            )
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("keep.txt", 3), (str(Path("nested") / "keep.bin"), 2)],
+            )
+
+    def test_parser_accepts_repeated_exclude_options(self) -> None:
+        arguments = build_parser().parse_args(
+            [".", "--exclude", "*.log", "--exclude", "node_modules"]
+        )
+
+        self.assertEqual(arguments.exclude, ["*.log", "node_modules"])
 
     def test_rejects_missing_folder_and_negative_top(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

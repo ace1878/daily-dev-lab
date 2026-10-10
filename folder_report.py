@@ -7,7 +7,9 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from fnmatch import fnmatch
 from pathlib import Path
+from typing import Iterable
 
 
 NO_EXTENSION = "[no extension]"
@@ -40,7 +42,21 @@ def _extension_for(path: Path) -> str:
     return path.suffix.lower() or NO_EXTENSION
 
 
-def scan_folder(root: Path, top: int = 5, include_hidden: bool = False) -> FolderReport:
+def _is_excluded(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
+    """Return whether a path's name or root-relative path matches a pattern."""
+    relative_path = path.relative_to(root).as_posix()
+    return any(
+        fnmatch(path.name, pattern) or fnmatch(relative_path, pattern)
+        for pattern in patterns
+    )
+
+
+def scan_folder(
+    root: Path,
+    top: int = 5,
+    include_hidden: bool = False,
+    exclude: Iterable[str] = (),
+) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
     if not root.exists():
@@ -49,6 +65,7 @@ def scan_folder(root: Path, top: int = 5, include_hidden: bool = False) -> Folde
         raise NotADirectoryError(f"Not a folder: {root}")
     if top < 0:
         raise ValueError("top must be zero or greater")
+    exclude_patterns = tuple(exclude)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     entries: list[FileEntry] = []
@@ -64,11 +81,14 @@ def scan_folder(root: Path, top: int = 5, include_hidden: bool = False) -> Folde
             for name in directories
             if not (current_path / name).is_symlink()
             and (include_hidden or (not name.startswith(".") and name != "__pycache__"))
+            and not _is_excluded(current_path / name, root, exclude_patterns)
         ]
 
         for filename in filenames:
             path = current_path / filename
             if not include_hidden and filename.startswith("."):
+                continue
+            if _is_excluded(path, root, exclude_patterns):
                 continue
             try:
                 if path.is_symlink() or not path.is_file():
@@ -149,13 +169,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include dotfiles, dot-directories, and __pycache__",
     )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="exclude a file pattern or directory name (repeatable)",
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        report = scan_folder(Path(args.path), args.top, args.include_hidden)
+        report = scan_folder(
+            Path(args.path),
+            top=args.top,
+            include_hidden=args.include_hidden,
+            exclude=args.exclude,
+        )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")
         return 2
