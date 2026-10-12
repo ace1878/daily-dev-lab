@@ -18,8 +18,18 @@
 python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10
 python folder_report.py . --json
+python folder_report.py . --csv report.csv
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
+```
+
+`--csv OUTPUT.csv`를 사용하면 확장자별 통계를 CSV 파일로 저장합니다. CSV 열은
+`extension`, `files`, `size_bytes` 순서입니다. `--json`과 `--csv`는 동시에 사용할
+수 없습니다.
+
+```powershell
+# 확장자별 파일 수와 바이트 용량을 report.csv로 저장
+python folder_report.py . --csv report.csv
 ```
 
 기본값에서는 숨김 파일·폴더와 `__pycache__`를 제외합니다.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
+import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
@@ -157,13 +159,31 @@ def render_text(report: FolderReport) -> str:
     return "\n".join(lines)
 
 
+def write_csv(report: FolderReport, output: Path) -> None:
+    """Write extension statistics to a CSV file."""
+    with output.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["extension", "files", "size_bytes"])
+        for item in report.extensions:
+            writer.writerow([item.extension, item.files, item.size])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Summarize file counts and sizes in a folder."
     )
     parser.add_argument("path", nargs="?", default=".", help="folder to scan (default: current folder)")
     parser.add_argument("--top", type=int, default=5, help="number of largest files to show")
-    parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON"
+    )
+    output_group.add_argument(
+        "--csv",
+        type=Path,
+        metavar="OUTPUT.csv",
+        help="save extension statistics as CSV",
+    )
     parser.add_argument(
         "--include-hidden",
         action="store_true",
@@ -181,18 +201,34 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    scan_root = Path(args.path).expanduser().resolve()
+    exclude_patterns = list(args.exclude)
+    csv_output = args.csv.expanduser().resolve() if args.csv else None
+    if csv_output:
+        try:
+            exclude_patterns.append(csv_output.relative_to(scan_root).as_posix())
+        except ValueError:
+            pass
+
     try:
         report = scan_folder(
-            Path(args.path),
+            scan_root,
             top=args.top,
             include_hidden=args.include_hidden,
-            exclude=args.exclude,
+            exclude=exclude_patterns,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")
         return 2
 
-    if args.json:
+    if csv_output:
+        try:
+            write_csv(report, csv_output)
+        except OSError as error:
+            print(f"Error: Could not save CSV to {csv_output}: {error}", file=sys.stderr)
+            return 2
+        print(f"CSV saved to: {csv_output}")
+    elif args.json:
         print(json.dumps(asdict(report), ensure_ascii=False, indent=2))
     else:
         print(render_text(report))
