@@ -49,3 +49,15 @@ python folder_report.py . --exclude "*.log" --exclude "node_modules"
 python -m unittest discover -s tests -v
 ```
 
+### CI
+
+GitHub Actions가 다음 상황에서 Python 3.12와 Ubuntu 환경으로 전체 테스트를
+자동 실행합니다.
+
+- `main` 브랜치에 push할 때
+- pull request를 만들거나 새로운 변경을 올릴 때
+
+실행 결과는 GitHub 저장소의 **Actions** 탭에서 `Tests` 워크플로를 선택해 확인할
+수 있습니다. 각 실행의 `test` 작업에서 테스트 로그와 성공·실패 원인을 볼 수
+있습니다. 테스트 명령이 실패하면 워크플로도 실패합니다.
+
