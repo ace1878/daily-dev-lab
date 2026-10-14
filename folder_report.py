@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 import os
 import sys
@@ -21,6 +22,19 @@ NO_EXTENSION = "[no extension]"
 class FileEntry:
     path: str
     size: int
+
+
+@dataclass(frozen=True)
+class _HeapFile:
+    """Heap item ordered with the least desirable top-file candidate first."""
+
+    path: str
+    size: int
+
+    def __lt__(self, other: _HeapFile) -> bool:
+        if self.size != other.size:
+            return self.size < other.size
+        return self.path > other.path
 
 
 @dataclass(frozen=True)
@@ -70,7 +84,9 @@ def scan_folder(
     exclude_patterns = tuple(exclude)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
-    entries: list[FileEntry] = []
+    largest_heap: list[_HeapFile] = []
+    file_count = 0
+    total_size = 0
     skipped: list[str] = []
 
     def on_error(error: OSError) -> None:
@@ -103,18 +119,32 @@ def scan_folder(
             extension = _extension_for(path)
             grouped[extension][0] += 1
             grouped[extension][1] += size
-            entries.append(FileEntry(str(path.relative_to(root)), size))
+            file_count += 1
+            total_size += size
+
+            if top:
+                candidate = _HeapFile(str(path.relative_to(root)), size)
+                if len(largest_heap) < top:
+                    heapq.heappush(largest_heap, candidate)
+                elif largest_heap[0] < candidate:
+                    heapq.heapreplace(largest_heap, candidate)
 
     extensions = [
         ExtensionSummary(extension, values[0], values[1])
         for extension, values in sorted(grouped.items())
     ]
-    largest_files = sorted(entries, key=lambda entry: (-entry.size, entry.path))[:top]
+    largest_files = [
+        FileEntry(entry.path, entry.size)
+        for entry in sorted(
+            largest_heap,
+            key=lambda entry: (-entry.size, entry.path),
+        )
+    ]
 
     return FolderReport(
         root=str(root),
-        files=len(entries),
-        size=sum(entry.size for entry in entries),
+        files=file_count,
+        size=total_size,
         extensions=extensions,
         largest_files=largest_files,
         skipped=sorted(set(skipped)),

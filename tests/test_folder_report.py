@@ -45,7 +45,24 @@ class ScanFolderTests(unittest.TestCase):
             root = Path(directory)
             (root / "one.bin").write_bytes(b"1")
 
-            self.assertEqual(scan_folder(root, top=0).largest_files, [])
+            report = scan_folder(root, top=0)
+
+            self.assertEqual(report.largest_files, [])
+            self.assertEqual(report.files, 1)
+            self.assertEqual(report.size, 1)
+
+    def test_same_size_files_keep_path_sort_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename in ("zeta.bin", "alpha.bin", "middle.bin"):
+                (root / filename).write_bytes(b"1234")
+
+            report = scan_folder(root, top=2)
+
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("alpha.bin", 4), ("middle.bin", 4)],
+            )
 
     def test_ignores_hidden_items_and_cache_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
