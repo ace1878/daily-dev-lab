@@ -19,8 +19,21 @@ python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10
 python folder_report.py . --json
 python folder_report.py . --csv report.csv
+python folder_report.py . --min-size 1048576
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
+```
+
+`--min-size BYTES`를 사용하면 지정한 바이트 이상의 파일만 통계에 포함합니다.
+경계값과 같은 크기의 파일도 포함되며, 파일 수·전체 용량·확장자 통계·큰 파일
+목록에 같은 기준이 적용됩니다.
+
+```powershell
+# 1 MiB(1,048,576바이트) 이상의 파일만 분석
+python folder_report.py . --min-size 1048576
+
+# 로그 파일을 제외하면서 1 MiB 이상의 결과를 CSV로 저장
+python folder_report.py . --min-size 1048576 --exclude "*.log" --csv report.csv
 ```
 
 `--csv OUTPUT.csv`를 사용하면 확장자별 통계를 CSV 파일로 저장합니다. CSV 열은

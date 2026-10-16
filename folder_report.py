@@ -72,6 +72,7 @@ def scan_folder(
     top: int = 5,
     include_hidden: bool = False,
     exclude: Iterable[str] = (),
+    min_size: int = 0,
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -81,6 +82,8 @@ def scan_folder(
         raise NotADirectoryError(f"Not a folder: {root}")
     if top < 0:
         raise ValueError("top must be zero or greater")
+    if min_size < 0:
+        raise ValueError("--min-size must be zero or greater")
     exclude_patterns = tuple(exclude)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
@@ -114,6 +117,8 @@ def scan_folder(
                 size = path.stat().st_size
             except OSError:
                 skipped.append(str(path))
+                continue
+            if size < min_size:
                 continue
 
             extension = _extension_for(path)
@@ -204,6 +209,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("path", nargs="?", default=".", help="folder to scan (default: current folder)")
     parser.add_argument("--top", type=int, default=5, help="number of largest files to show")
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        default=0,
+        metavar="BYTES",
+        help="include only files at least this many bytes",
+    )
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
@@ -246,6 +258,7 @@ def main() -> int:
             top=args.top,
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
+            min_size=args.min_size,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")

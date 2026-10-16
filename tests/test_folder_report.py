@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -64,6 +65,27 @@ class ScanFolderTests(unittest.TestCase):
                 [("alpha.bin", 4), ("middle.bin", 4)],
             )
 
+    def test_min_size_includes_boundary_and_filters_all_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"1234")
+            (root / "boundary.txt").write_bytes(b"12345")
+            (root / "large.bin").write_bytes(b"123456")
+            (root / "ignored.log").write_bytes(b"1234567")
+
+            report = scan_folder(root, min_size=5, exclude=["*.log"])
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 11)
+            self.assertEqual(
+                [(item.extension, item.files, item.size) for item in report.extensions],
+                [(".bin", 1, 6), (".txt", 1, 5)],
+            )
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("large.bin", 6), ("boundary.txt", 5)],
+            )
+
     def test_ignores_hidden_items_and_cache_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -126,6 +148,39 @@ class ScanFolderTests(unittest.TestCase):
                 scan_folder(root / "missing")
             with self.assertRaises(ValueError):
                 scan_folder(root, top=-1)
+            with self.assertRaisesRegex(ValueError, "--min-size must be zero or greater"):
+                scan_folder(root, min_size=-1)
+
+    def test_main_reports_negative_min_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--min-size", "-1"],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("--min-size must be zero or greater", output.getvalue())
+
+    def test_min_size_works_with_json_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"1234")
+            (root / "large.txt").write_bytes(b"12345")
+            output = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--min-size", "5", "--json"],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            result = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(result["files"], 1)
+            self.assertEqual(result["size"], 5)
 
     def test_render_text_handles_empty_folder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -206,6 +261,34 @@ class CsvOutputTests(unittest.TestCase):
             self.assertEqual(
                 rows,
                 [{"extension": ".txt", "files": "1", "size_bytes": "3"}],
+            )
+
+    def test_min_size_works_with_csv_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"1234")
+            (root / "large.bin").write_bytes(b"12345")
+            output = root / "report.csv"
+
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    str(root),
+                    "--min-size",
+                    "5",
+                    "--csv",
+                    str(output),
+                ],
+            ), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            with output.open(encoding="utf-8", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                rows,
+                [{"extension": ".bin", "files": "1", "size_bytes": "5"}],
             )
 
 
