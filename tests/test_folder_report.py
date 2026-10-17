@@ -182,6 +182,53 @@ class ScanFolderTests(unittest.TestCase):
             self.assertEqual(result["files"], 1)
             self.assertEqual(result["size"], 5)
 
+    def test_sorts_extension_statistics_by_extension_size_and_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename, size in (
+                ("one.bin", 4),
+                ("two.bin", 4),
+                ("one.csv", 10),
+                ("one.log", 3),
+                ("two.log", 5),
+                ("one.txt", 2),
+                ("two.txt", 2),
+                ("three.txt", 2),
+                ("ignored.tmp", 20),
+                ("small.dat", 1),
+            ):
+                (root / filename).write_bytes(b"x" * size)
+
+            expected = {
+                "extension": [".bin", ".csv", ".log", ".txt"],
+                "size": [".csv", ".bin", ".log", ".txt"],
+                "count": [".txt", ".bin", ".log", ".csv"],
+            }
+            for sort_by, extensions in expected.items():
+                with self.subTest(sort_by=sort_by):
+                    report = scan_folder(
+                        root,
+                        exclude=["*.tmp"],
+                        min_size=2,
+                        sort_by=sort_by,
+                    )
+                    self.assertEqual(
+                        [item.extension for item in report.extensions],
+                        extensions,
+                    )
+
+    def test_rejects_invalid_sort_by(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "--sort-by must be one of"):
+                scan_folder(Path(directory), sort_by="unknown")
+
+        error_output = io.StringIO()
+        with redirect_stderr(error_output), self.assertRaises(SystemExit) as context:
+            build_parser().parse_args([".", "--sort-by", "unknown"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("invalid choice", error_output.getvalue())
+
     def test_render_text_handles_empty_folder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = render_text(scan_folder(Path(directory)))
@@ -290,6 +337,49 @@ class CsvOutputTests(unittest.TestCase):
                 rows,
                 [{"extension": ".bin", "files": "1", "size_bytes": "5"}],
             )
+
+    def test_sort_order_is_shared_by_text_json_and_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "one.txt").write_bytes(b"123")
+            (root / "one.bin").write_bytes(b"12345")
+            expected = [".bin", ".txt"]
+
+            report = scan_folder(root, sort_by="size")
+            text_output = render_text(report)
+            self.assertLess(text_output.index(".bin"), text_output.index(".txt"))
+
+            json_output = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["folder_report.py", str(root), "--sort-by", "size", "--json"],
+            ), redirect_stdout(json_output):
+                json_exit_code = main()
+            json_extensions = [
+                item["extension"]
+                for item in json.loads(json_output.getvalue())["extensions"]
+            ]
+
+            csv_output = root / "report.csv"
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    str(root),
+                    "--sort-by",
+                    "size",
+                    "--csv",
+                    str(csv_output),
+                ],
+            ), redirect_stdout(io.StringIO()):
+                csv_exit_code = main()
+            with csv_output.open(encoding="utf-8", newline="") as csv_file:
+                csv_extensions = [row["extension"] for row in csv.DictReader(csv_file)]
+
+            self.assertEqual(json_exit_code, 0)
+            self.assertEqual(csv_exit_code, 0)
+            self.assertEqual(json_extensions, expected)
+            self.assertEqual(csv_extensions, expected)
 
 
 if __name__ == "__main__":

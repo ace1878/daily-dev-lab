@@ -20,8 +20,24 @@ python folder_report.py . --top 10
 python folder_report.py . --json
 python folder_report.py . --csv report.csv
 python folder_report.py . --min-size 1048576
+python folder_report.py . --sort-by size
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
+```
+
+`--sort-by`로 확장자별 통계의 정렬 기준을 선택할 수 있습니다.
+
+- `extension`: 확장자 이름 오름차순(기본값)
+- `size`: 확장자별 총용량 내림차순
+- `count`: 확장자별 파일 개수 내림차순
+
+용량이나 파일 개수가 같으면 확장자 이름 오름차순으로 정렬합니다. 선택한 순서는
+텍스트, JSON, CSV 출력에 똑같이 적용됩니다.
+
+```powershell
+python folder_report.py . --sort-by size
+python folder_report.py . --sort-by count
+python folder_report.py . --min-size 1048576 --exclude "*.log" --sort-by size
 ```
 
 `--min-size BYTES`를 사용하면 지정한 바이트 이상의 파일만 통계에 포함합니다.

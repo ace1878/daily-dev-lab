@@ -73,6 +73,7 @@ def scan_folder(
     include_hidden: bool = False,
     exclude: Iterable[str] = (),
     min_size: int = 0,
+    sort_by: str = "extension",
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -84,6 +85,8 @@ def scan_folder(
         raise ValueError("top must be zero or greater")
     if min_size < 0:
         raise ValueError("--min-size must be zero or greater")
+    if sort_by not in {"extension", "size", "count"}:
+        raise ValueError("--sort-by must be one of: extension, size, count")
     exclude_patterns = tuple(exclude)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
@@ -136,8 +139,14 @@ def scan_folder(
 
     extensions = [
         ExtensionSummary(extension, values[0], values[1])
-        for extension, values in sorted(grouped.items())
+        for extension, values in grouped.items()
     ]
+    if sort_by == "size":
+        extensions.sort(key=lambda item: (-item.size, item.extension))
+    elif sort_by == "count":
+        extensions.sort(key=lambda item: (-item.files, item.extension))
+    else:
+        extensions.sort(key=lambda item: item.extension)
     largest_files = [
         FileEntry(entry.path, entry.size)
         for entry in sorted(
@@ -216,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="BYTES",
         help="include only files at least this many bytes",
     )
+    parser.add_argument(
+        "--sort-by",
+        choices=("extension", "size", "count"),
+        default="extension",
+        help="sort extension statistics (default: extension)",
+    )
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
@@ -259,6 +274,7 @@ def main() -> int:
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
             min_size=args.min_size,
+            sort_by=args.sort_by,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")
