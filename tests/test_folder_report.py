@@ -86,6 +86,43 @@ class ScanFolderTests(unittest.TestCase):
                 [("large.bin", 6), ("boundary.txt", 5)],
             )
 
+    def test_max_size_includes_boundary_and_filters_all_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"1234")
+            (root / "boundary.txt").write_bytes(b"12345")
+            (root / "large.bin").write_bytes(b"123456")
+
+            report = scan_folder(root, max_size=5)
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 9)
+            self.assertEqual(
+                [(item.extension, item.files, item.size) for item in report.extensions],
+                [(".txt", 2, 9)],
+            )
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("boundary.txt", 5), ("small.txt", 4)],
+            )
+
+    def test_min_and_max_size_include_only_requested_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"123")
+            (root / "minimum.txt").write_bytes(b"1234")
+            (root / "maximum.bin").write_bytes(b"12345")
+            (root / "large.bin").write_bytes(b"123456")
+
+            report = scan_folder(root, min_size=4, max_size=5)
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 9)
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("maximum.bin", 5), ("minimum.txt", 4)],
+            )
+
     def test_ignores_hidden_items_and_cache_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -163,6 +200,44 @@ class ScanFolderTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 2)
             self.assertIn("--min-size must be zero or greater", output.getvalue())
+
+    def test_rejects_invalid_max_size_and_reversed_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "--max-size must be zero or greater"):
+                scan_folder(root, max_size=-1)
+            with self.assertRaisesRegex(
+                ValueError,
+                "--min-size must not be greater than --max-size",
+            ):
+                scan_folder(root, min_size=6, max_size=5)
+
+        error_output = io.StringIO()
+        with redirect_stderr(error_output), self.assertRaises(SystemExit) as context:
+            build_parser().parse_args([".", "--max-size", "invalid"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("invalid int value", error_output.getvalue())
+
+    def test_main_reports_negative_max_size_and_reversed_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for arguments, message in (
+                (["--max-size", "-1"], "--max-size must be zero or greater"),
+                (
+                    ["--min-size", "6", "--max-size", "5"],
+                    "--min-size must not be greater than --max-size",
+                ),
+            ):
+                with self.subTest(arguments=arguments):
+                    output = io.StringIO()
+                    with patch(
+                        "sys.argv",
+                        ["folder_report.py", directory, *arguments],
+                    ), redirect_stdout(output):
+                        exit_code = main()
+
+                    self.assertEqual(exit_code, 2)
+                    self.assertIn(message, output.getvalue())
 
     def test_min_size_works_with_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

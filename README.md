@@ -20,6 +20,7 @@ python folder_report.py . --top 10
 python folder_report.py . --json
 python folder_report.py . --csv report.csv
 python folder_report.py . --min-size 1048576
+python folder_report.py . --max-size 1048576
 python folder_report.py . --sort-by size
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
@@ -50,6 +51,20 @@ python folder_report.py . --min-size 1048576
 
 # 로그 파일을 제외하면서 1 MiB 이상의 결과를 CSV로 저장
 python folder_report.py . --min-size 1048576 --exclude "*.log" --csv report.csv
+```
+
+`--max-size BYTES`를 사용하면 지정한 바이트 이하의 파일만 통계에 포함합니다.
+`--min-size`와 함께 지정하면 두 경계값을 포함하는 크기 범위만 분석합니다.
+
+```powershell
+# 1 MiB 이하의 파일만 분석
+python folder_report.py . --max-size 1048576
+
+# 1 KiB 이상, 1 MiB 이하의 파일만 분석
+python folder_report.py . --min-size 1024 --max-size 1048576
+
+# 범위 필터와 제외·정렬·CSV 옵션 함께 사용
+python folder_report.py . --min-size 1024 --max-size 1048576 --exclude "*.log" --sort-by size --csv report.csv
 ```
 
 `--csv OUTPUT.csv`를 사용하면 확장자별 통계를 CSV 파일로 저장합니다. CSV 열은

@@ -73,6 +73,7 @@ def scan_folder(
     include_hidden: bool = False,
     exclude: Iterable[str] = (),
     min_size: int = 0,
+    max_size: int | None = None,
     sort_by: str = "extension",
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
@@ -85,6 +86,10 @@ def scan_folder(
         raise ValueError("top must be zero or greater")
     if min_size < 0:
         raise ValueError("--min-size must be zero or greater")
+    if max_size is not None and max_size < 0:
+        raise ValueError("--max-size must be zero or greater")
+    if max_size is not None and min_size > max_size:
+        raise ValueError("--min-size must not be greater than --max-size")
     if sort_by not in {"extension", "size", "count"}:
         raise ValueError("--sort-by must be one of: extension, size, count")
     exclude_patterns = tuple(exclude)
@@ -122,6 +127,8 @@ def scan_folder(
                 skipped.append(str(path))
                 continue
             if size < min_size:
+                continue
+            if max_size is not None and size > max_size:
                 continue
 
             extension = _extension_for(path)
@@ -226,6 +233,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="include only files at least this many bytes",
     )
     parser.add_argument(
+        "--max-size",
+        type=int,
+        metavar="BYTES",
+        help="include only files at most this many bytes",
+    )
+    parser.add_argument(
         "--sort-by",
         choices=("extension", "size", "count"),
         default="extension",
@@ -274,6 +287,7 @@ def main() -> int:
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
             min_size=args.min_size,
+            max_size=args.max_size,
             sort_by=args.sort_by,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
