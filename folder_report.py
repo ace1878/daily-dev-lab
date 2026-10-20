@@ -67,6 +67,21 @@ def _is_excluded(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     )
 
 
+def _normalize_extensions(extensions: Iterable[str]) -> set[str]:
+    """Return extensions in lowercase with one leading dot."""
+    normalized: set[str] = set()
+    for value in extensions:
+        name = value.strip()
+        if name.startswith("."):
+            name = name[1:]
+        if not name or "." in name or "/" in name or "\\" in name:
+            raise ValueError(
+                "--extension must be a single extension name, such as txt or .txt"
+            )
+        normalized.add(f".{name.lower()}")
+    return normalized
+
+
 def scan_folder(
     root: Path,
     top: int = 5,
@@ -75,6 +90,7 @@ def scan_folder(
     min_size: int = 0,
     max_size: int | None = None,
     sort_by: str = "extension",
+    extensions: Iterable[str] = (),
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -93,6 +109,7 @@ def scan_folder(
     if sort_by not in {"extension", "size", "count"}:
         raise ValueError("--sort-by must be one of: extension, size, count")
     exclude_patterns = tuple(exclude)
+    included_extensions = _normalize_extensions(extensions)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     largest_heap: list[_HeapFile] = []
@@ -119,6 +136,9 @@ def scan_folder(
                 continue
             if _is_excluded(path, root, exclude_patterns):
                 continue
+            extension = _extension_for(path)
+            if included_extensions and extension not in included_extensions:
+                continue
             try:
                 if path.is_symlink() or not path.is_file():
                     continue
@@ -131,7 +151,6 @@ def scan_folder(
             if max_size is not None and size > max_size:
                 continue
 
-            extension = _extension_for(path)
             grouped[extension][0] += 1
             grouped[extension][1] += size
             file_count += 1
@@ -144,16 +163,16 @@ def scan_folder(
                 elif largest_heap[0] < candidate:
                     heapq.heapreplace(largest_heap, candidate)
 
-    extensions = [
+    extension_summaries = [
         ExtensionSummary(extension, values[0], values[1])
         for extension, values in grouped.items()
     ]
     if sort_by == "size":
-        extensions.sort(key=lambda item: (-item.size, item.extension))
+        extension_summaries.sort(key=lambda item: (-item.size, item.extension))
     elif sort_by == "count":
-        extensions.sort(key=lambda item: (-item.files, item.extension))
+        extension_summaries.sort(key=lambda item: (-item.files, item.extension))
     else:
-        extensions.sort(key=lambda item: item.extension)
+        extension_summaries.sort(key=lambda item: item.extension)
     largest_files = [
         FileEntry(entry.path, entry.size)
         for entry in sorted(
@@ -166,7 +185,7 @@ def scan_folder(
         root=str(root),
         files=file_count,
         size=total_size,
-        extensions=extensions,
+        extensions=extension_summaries,
         largest_files=largest_files,
         skipped=sorted(set(skipped)),
     )
@@ -266,6 +285,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATTERN",
         help="exclude a file pattern or directory name (repeatable)",
     )
+    parser.add_argument(
+        "--extension",
+        action="append",
+        default=[],
+        metavar="EXT",
+        help="include only this file extension (repeatable)",
+    )
     return parser
 
 
@@ -286,6 +312,7 @@ def main() -> int:
             top=args.top,
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
+            extensions=args.extension,
             min_size=args.min_size,
             max_size=args.max_size,
             sort_by=args.sort_by,

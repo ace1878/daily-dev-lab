@@ -171,12 +171,108 @@ class ScanFolderTests(unittest.TestCase):
                 [("keep.txt", 3), (str(Path("nested") / "keep.bin"), 2)],
             )
 
+    def test_filters_a_single_extension_without_leading_dot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.txt").write_bytes(b"123")
+            (root / "skip.bin").write_bytes(b"12345")
+
+            report = scan_folder(root, extensions=["txt"])
+
+            self.assertEqual(report.files, 1)
+            self.assertEqual(report.size, 3)
+            self.assertEqual(
+                [(item.extension, item.files, item.size) for item in report.extensions],
+                [(".txt", 1, 3)],
+            )
+            self.assertEqual(
+                [(item.path, item.size) for item in report.largest_files],
+                [("keep.txt", 3)],
+            )
+
+    def test_multiple_extensions_use_or_condition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "notes.txt").write_bytes(b"12")
+            (root / "data.csv").write_bytes(b"123")
+            (root / "skip.bin").write_bytes(b"1234")
+
+            report = scan_folder(root, extensions=[".txt", "csv"])
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(
+                [item.extension for item in report.extensions],
+                [".csv", ".txt"],
+            )
+
+    def test_extension_filter_is_case_insensitive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "first.TXT").write_bytes(b"1")
+            (root / "second.TxT").write_bytes(b"22")
+            (root / "skip.csv").write_bytes(b"333")
+
+            report = scan_folder(root, extensions=["tXt"])
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 3)
+            self.assertEqual(report.extensions[0].extension, ".txt")
+
+    def test_extension_filter_combines_with_size_and_exclude_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "too-small.txt").write_bytes(b"123")
+            (root / "keep.txt").write_bytes(b"1234")
+            (root / "too-large.txt").write_bytes(b"123456")
+            (root / "excluded.txt").write_bytes(b"12345")
+            (root / "right-size.bin").write_bytes(b"1234")
+
+            report = scan_folder(
+                root,
+                extensions=["txt"],
+                min_size=4,
+                max_size=5,
+                exclude=["excluded.txt"],
+                sort_by="size",
+            )
+
+            self.assertEqual(report.files, 1)
+            self.assertEqual(report.size, 4)
+            self.assertEqual(report.largest_files[0].path, "keep.txt")
+
     def test_parser_accepts_repeated_exclude_options(self) -> None:
         arguments = build_parser().parse_args(
             [".", "--exclude", "*.log", "--exclude", "node_modules"]
         )
 
         self.assertEqual(arguments.exclude, ["*.log", "node_modules"])
+
+    def test_parser_accepts_repeated_extension_options(self) -> None:
+        arguments = build_parser().parse_args(
+            [".", "--extension", "txt", "--extension", ".CSV"]
+        )
+
+        self.assertEqual(arguments.extension, ["txt", ".CSV"])
+
+    def test_rejects_invalid_extension_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for extension in ("", ".", "tar.gz", "folder/txt", "folder\\txt"):
+                with self.subTest(extension=extension), self.assertRaisesRegex(
+                    ValueError,
+                    "--extension must be a single extension name",
+                ):
+                    scan_folder(root, extensions=[extension])
+
+            output = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--extension", "."],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("--extension must be a single extension name", output.getvalue())
 
     def test_rejects_missing_folder_and_negative_top(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -455,6 +551,34 @@ class CsvOutputTests(unittest.TestCase):
             self.assertEqual(csv_exit_code, 0)
             self.assertEqual(json_extensions, expected)
             self.assertEqual(csv_extensions, expected)
+
+    def test_extension_filter_works_with_csv_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.TXT").write_bytes(b"123")
+            (root / "skip.bin").write_bytes(b"12345")
+            output = root / "report.csv"
+
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    str(root),
+                    "--extension",
+                    "txt",
+                    "--csv",
+                    str(output),
+                ],
+            ), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            with output.open(encoding="utf-8", newline="") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                rows,
+                [{"extension": ".txt", "files": "1", "size_bytes": "3"}],
+            )
 
 
 if __name__ == "__main__":

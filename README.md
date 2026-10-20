@@ -24,6 +24,22 @@ python folder_report.py . --max-size 1048576
 python folder_report.py . --sort-by size
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
+python folder_report.py . --extension txt --extension .csv
+```
+
+`--extension EXT`를 사용하면 지정한 확장자의 파일만 분석합니다. 옵션을 여러 번
+사용하면 지정한 확장자 중 하나와 일치하는 파일을 모두 포함합니다. 확장자 앞의
+점은 생략할 수 있고 대소문자를 구분하지 않습니다.
+
+```powershell
+# TXT 파일만 분석(.txt와 동일)
+python folder_report.py . --extension txt
+
+# TXT 또는 CSV 파일만 분석
+python folder_report.py . --extension .txt --extension CSV
+
+# 확장자·크기·제외·정렬 필터를 함께 사용하고 JSON으로 출력
+python folder_report.py . --extension txt --min-size 1024 --max-size 1048576 --exclude "*.log" --sort-by size --json
 ```
 
 `--sort-by`로 확장자별 통계의 정렬 기준을 선택할 수 있습니다.
