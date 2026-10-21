@@ -25,6 +25,22 @@ python folder_report.py . --sort-by size
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
 python folder_report.py . --extension txt --extension .csv
+python folder_report.py . --max-depth 1
+```
+
+`--max-depth DEPTH`를 사용하면 기준 폴더에서 지정한 깊이까지만 탐색합니다.
+`0`은 기준 폴더의 파일만, `1`은 바로 아래 하위 폴더의 파일까지 포함합니다.
+옵션을 생략하면 기존처럼 모든 하위 폴더를 탐색합니다.
+
+```powershell
+# 현재 폴더의 파일만 분석
+python folder_report.py . --max-depth 0
+
+# 바로 아래 하위 폴더까지 분석
+python folder_report.py . --max-depth 1
+
+# 깊이 제한과 기존 필터를 함께 사용
+python folder_report.py . --max-depth 2 --extension py --exclude "__pycache__" --json
 ```
 
 `--extension EXT`를 사용하면 지정한 확장자의 파일만 분석합니다. 옵션을 여러 번

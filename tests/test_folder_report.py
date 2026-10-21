@@ -143,6 +143,107 @@ class ScanFolderTests(unittest.TestCase):
             self.assertEqual(complete_report.files, 4)
             self.assertEqual(complete_report.size, 10)
 
+    def test_max_depth_zero_one_and_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "root.txt").write_bytes(b"1")
+            level_one = root / "level-one"
+            level_one.mkdir()
+            (level_one / "one.txt").write_bytes(b"22")
+            level_two = level_one / "level-two"
+            level_two.mkdir()
+            (level_two / "two.txt").write_bytes(b"333")
+            level_three = level_two / "level-three"
+            level_three.mkdir()
+            (level_three / "three.txt").write_bytes(b"4444")
+
+            expected = {
+                0: (["root.txt"], 1),
+                1: ([str(Path("level-one") / "one.txt"), "root.txt"], 3),
+                2: (
+                    [
+                        str(Path("level-one") / "level-two" / "two.txt"),
+                        str(Path("level-one") / "one.txt"),
+                        "root.txt",
+                    ],
+                    6,
+                ),
+            }
+            for max_depth, (paths, total_size) in expected.items():
+                with self.subTest(max_depth=max_depth):
+                    report = scan_folder(root, max_depth=max_depth)
+                    self.assertEqual(report.files, max_depth + 1)
+                    self.assertEqual(report.size, total_size)
+                    self.assertEqual(
+                        [item.path for item in report.largest_files],
+                        paths,
+                    )
+
+    def test_omitted_max_depth_keeps_full_recursive_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deepest = root / "one" / "two" / "three"
+            deepest.mkdir(parents=True)
+            (root / "root.txt").write_bytes(b"1")
+            (deepest / "deep.txt").write_bytes(b"22")
+
+            report = scan_folder(root)
+
+            self.assertEqual(report.files, 2)
+            self.assertEqual(report.size, 3)
+            self.assertEqual(
+                [item.path for item in report.largest_files],
+                [str(Path("one") / "two" / "three" / "deep.txt"), "root.txt"],
+            )
+
+    def test_max_depth_combines_with_existing_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.txt").write_bytes(b"1")
+            level_one = root / "level-one"
+            level_one.mkdir()
+            (level_one / "keep.TXT").write_bytes(b"123")
+            (level_one / "skip.log").write_bytes(b"123")
+            level_two = level_one / "level-two"
+            level_two.mkdir()
+            (level_two / "too-deep.txt").write_bytes(b"123")
+
+            report = scan_folder(
+                root,
+                max_depth=1,
+                extensions=["txt"],
+                min_size=2,
+                max_size=3,
+                exclude=["*.log"],
+                sort_by="size",
+            )
+
+            self.assertEqual(report.files, 1)
+            self.assertEqual(report.size, 3)
+            self.assertEqual(
+                [item.path for item in report.largest_files],
+                [str(Path("level-one") / "keep.TXT")],
+            )
+
+    def test_max_depth_prunes_deeper_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / "child"
+            child.mkdir()
+            visited_deeper = []
+
+            def fake_walk(*args, **kwargs):
+                directories = ["child"]
+                yield str(root), directories, []
+                if directories:
+                    visited_deeper.append(True)
+                    yield str(child), [], []
+
+            with patch("folder_report.os.walk", side_effect=fake_walk):
+                scan_folder(root, max_depth=0)
+
+            self.assertEqual(visited_deeper, [])
+
     def test_excludes_file_patterns_and_directory_names_from_all_statistics(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -283,6 +384,27 @@ class ScanFolderTests(unittest.TestCase):
                 scan_folder(root, top=-1)
             with self.assertRaisesRegex(ValueError, "--min-size must be zero or greater"):
                 scan_folder(root, min_size=-1)
+            with self.assertRaisesRegex(ValueError, "--max-depth must be zero or greater"):
+                scan_folder(root, max_depth=-1)
+
+    def test_main_reports_invalid_max_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--max-depth", "-1"],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("--max-depth must be zero or greater", output.getvalue())
+
+        error_output = io.StringIO()
+        with redirect_stderr(error_output), self.assertRaises(SystemExit) as context:
+            build_parser().parse_args([".", "--max-depth", "invalid"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("invalid int value", error_output.getvalue())
 
     def test_main_reports_negative_min_size(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

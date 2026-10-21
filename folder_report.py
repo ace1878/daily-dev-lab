@@ -91,6 +91,7 @@ def scan_folder(
     max_size: int | None = None,
     sort_by: str = "extension",
     extensions: Iterable[str] = (),
+    max_depth: int | None = None,
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -106,6 +107,8 @@ def scan_folder(
         raise ValueError("--max-size must be zero or greater")
     if max_size is not None and min_size > max_size:
         raise ValueError("--min-size must not be greater than --max-size")
+    if max_depth is not None and max_depth < 0:
+        raise ValueError("--max-depth must be zero or greater")
     if sort_by not in {"extension", "size", "count"}:
         raise ValueError("--sort-by must be one of: extension, size, count")
     exclude_patterns = tuple(exclude)
@@ -122,13 +125,20 @@ def scan_folder(
 
     for current, directories, filenames in os.walk(root, onerror=on_error, followlinks=False):
         current_path = Path(current)
-        directories[:] = [
-            name
-            for name in directories
-            if not (current_path / name).is_symlink()
-            and (include_hidden or (not name.startswith(".") and name != "__pycache__"))
-            and not _is_excluded(current_path / name, root, exclude_patterns)
-        ]
+        current_depth = len(current_path.relative_to(root).parts)
+        if max_depth is not None and current_depth >= max_depth:
+            directories.clear()
+        else:
+            directories[:] = [
+                name
+                for name in directories
+                if not (current_path / name).is_symlink()
+                and (
+                    include_hidden
+                    or (not name.startswith(".") and name != "__pycache__")
+                )
+                and not _is_excluded(current_path / name, root, exclude_patterns)
+            ]
 
         for filename in filenames:
             path = current_path / filename
@@ -292,6 +302,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="EXT",
         help="include only this file extension (repeatable)",
     )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        metavar="DEPTH",
+        help="limit folder traversal depth (0 scans only the selected folder)",
+    )
     return parser
 
 
@@ -313,6 +329,7 @@ def main() -> int:
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
             extensions=args.extension,
+            max_depth=args.max_depth,
             min_size=args.min_size,
             max_size=args.max_size,
             sort_by=args.sort_by,
