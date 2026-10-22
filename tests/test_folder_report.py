@@ -1,3 +1,4 @@
+import argparse
 import csv
 import io
 import json
@@ -12,6 +13,7 @@ from folder_report import (
     build_parser,
     format_size,
     main,
+    parse_size,
     render_text,
     scan_folder,
     write_csv,
@@ -406,19 +408,6 @@ class ScanFolderTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 2)
         self.assertIn("invalid int value", error_output.getvalue())
 
-    def test_main_reports_negative_min_size(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            output = io.StringIO()
-
-            with patch(
-                "sys.argv",
-                ["folder_report.py", directory, "--min-size", "-1"],
-            ), redirect_stdout(output):
-                exit_code = main()
-
-            self.assertEqual(exit_code, 2)
-            self.assertIn("--min-size must be zero or greater", output.getvalue())
-
     def test_rejects_invalid_max_size_and_reversed_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -435,27 +424,57 @@ class ScanFolderTests(unittest.TestCase):
             build_parser().parse_args([".", "--max-size", "invalid"])
 
         self.assertEqual(context.exception.code, 2)
-        self.assertIn("invalid int value", error_output.getvalue())
+        self.assertIn("size must be a whole number", error_output.getvalue())
 
-    def test_main_reports_negative_max_size_and_reversed_range(self) -> None:
+    def test_main_reports_reversed_size_range_with_units(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            for arguments, message in (
-                (["--max-size", "-1"], "--max-size must be zero or greater"),
-                (
-                    ["--min-size", "6", "--max-size", "5"],
-                    "--min-size must not be greater than --max-size",
-                ),
-            ):
-                with self.subTest(arguments=arguments):
-                    output = io.StringIO()
-                    with patch(
-                        "sys.argv",
-                        ["folder_report.py", directory, *arguments],
-                    ), redirect_stdout(output):
-                        exit_code = main()
+            output = io.StringIO()
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    directory,
+                    "--min-size",
+                    "2MiB",
+                    "--max-size",
+                    "1MiB",
+                ],
+            ), redirect_stdout(output):
+                exit_code = main()
 
-                    self.assertEqual(exit_code, 2)
-                    self.assertIn(message, output.getvalue())
+            self.assertEqual(exit_code, 2)
+            self.assertIn(
+                "--min-size must not be greater than --max-size",
+                output.getvalue(),
+            )
+
+    def test_min_and_max_unit_sizes_filter_cli_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "small.bin").write_bytes(b"x" * 1023)
+            (root / "minimum.bin").write_bytes(b"x" * (2 * 1024))
+            (root / "maximum.bin").write_bytes(b"x" * (3 * 1024))
+            (root / "large.bin").write_bytes(b"x" * (3 * 1024 + 1))
+            output = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    directory,
+                    "--min-size",
+                    "2KiB",
+                    "--max-size",
+                    "3kIb",
+                    "--json",
+                ],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            result = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(result["files"], 2)
+            self.assertEqual(result["size"], 5 * 1024)
 
     def test_min_size_works_with_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -534,6 +553,44 @@ class FormatSizeTests(unittest.TestCase):
     def test_formats_binary_units(self) -> None:
         self.assertEqual(format_size(999), "999 B")
         self.assertEqual(format_size(1536), "1.5 KiB")
+
+
+class ParseSizeTests(unittest.TestCase):
+    def test_parses_existing_byte_input(self) -> None:
+        self.assertEqual(parse_size("0"), 0)
+        self.assertEqual(parse_size("1048576"), 1048576)
+
+    def test_parses_kib_mib_and_gib(self) -> None:
+        self.assertEqual(parse_size("2KiB"), 2 * 1024)
+        self.assertEqual(parse_size("3MiB"), 3 * 1024**2)
+        self.assertEqual(parse_size("4GiB"), 4 * 1024**3)
+
+    def test_units_are_case_insensitive(self) -> None:
+        self.assertEqual(parse_size("2kIb"), 2 * 1024)
+        self.assertEqual(parse_size("3MIB"), 3 * 1024**2)
+        self.assertEqual(parse_size("4gib"), 4 * 1024**3)
+
+    def test_rejects_negative_decimal_and_invalid_unit(self) -> None:
+        cases = {
+            "-1": "size must be zero or greater",
+            "1.5MiB": "size must be a whole number",
+            "2MB": "size must be a whole number",
+            "abc": "size must be a whole number",
+        }
+        for value, message in cases.items():
+            with self.subTest(value=value), self.assertRaisesRegex(
+                argparse.ArgumentTypeError,
+                message,
+            ):
+                parse_size(value)
+
+    def test_parser_converts_min_and_max_sizes_to_bytes(self) -> None:
+        arguments = build_parser().parse_args(
+            [".", "--min-size", "2KiB", "--max-size", "3mIb"]
+        )
+
+        self.assertEqual(arguments.min_size, 2 * 1024)
+        self.assertEqual(arguments.max_size, 3 * 1024**2)
 
 
 class CsvOutputTests(unittest.TestCase):

@@ -19,8 +19,8 @@ python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10
 python folder_report.py . --json
 python folder_report.py . --csv report.csv
-python folder_report.py . --min-size 1048576
-python folder_report.py . --max-size 1048576
+python folder_report.py . --min-size 1MiB
+python folder_report.py . --max-size 2GiB
 python folder_report.py . --sort-by size
 python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
@@ -73,27 +73,33 @@ python folder_report.py . --sort-by count
 python folder_report.py . --min-size 1048576 --exclude "*.log" --sort-by size
 ```
 
-`--min-size BYTES`를 사용하면 지정한 바이트 이상의 파일만 통계에 포함합니다.
+`--min-size SIZE`를 사용하면 지정한 크기 이상의 파일만 통계에 포함합니다.
 경계값과 같은 크기의 파일도 포함되며, 파일 수·전체 용량·확장자 통계·큰 파일
-목록에 같은 기준이 적용됩니다.
+목록에 같은 기준이 적용됩니다. 단위 없는 정수는 기존처럼 바이트로 처리하며,
+`KiB`, `MiB`, `GiB` 단위를 대소문자 구분 없이 사용할 수 있습니다.
+각 단위는 1024배 기준이며 크기 숫자는 0 이상의 정수만 허용합니다. 음수, 소수,
+`KB`나 `MB`처럼 지원하지 않는 단위는 오류로 처리됩니다.
 
 ```powershell
 # 1 MiB(1,048,576바이트) 이상의 파일만 분석
 python folder_report.py . --min-size 1048576
 
+# 1 MiB 이상의 파일만 분석
+python folder_report.py . --min-size 1MiB
+
 # 로그 파일을 제외하면서 1 MiB 이상의 결과를 CSV로 저장
 python folder_report.py . --min-size 1048576 --exclude "*.log" --csv report.csv
 ```
 
-`--max-size BYTES`를 사용하면 지정한 바이트 이하의 파일만 통계에 포함합니다.
+`--max-size SIZE`를 사용하면 지정한 크기 이하의 파일만 통계에 포함합니다.
 `--min-size`와 함께 지정하면 두 경계값을 포함하는 크기 범위만 분석합니다.
 
 ```powershell
 # 1 MiB 이하의 파일만 분석
 python folder_report.py . --max-size 1048576
 
-# 1 KiB 이상, 1 MiB 이하의 파일만 분석
-python folder_report.py . --min-size 1024 --max-size 1048576
+# 1 KiB 이상, 1 MiB 이하의 파일만 분석(단위 대소문자 무관)
+python folder_report.py . --min-size 1KiB --max-size 1mIb
 
 # 범위 필터와 제외·정렬·CSV 옵션 함께 사용
 python folder_report.py . --min-size 1024 --max-size 1048576 --exclude "*.log" --sort-by size --csv report.csv

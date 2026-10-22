@@ -7,6 +7,7 @@ import csv
 import heapq
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -16,6 +17,12 @@ from typing import Iterable
 
 
 NO_EXTENSION = "[no extension]"
+SIZE_UNITS = {
+    "": 1,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,21 @@ def _normalize_extensions(extensions: Iterable[str]) -> set[str]:
             )
         normalized.add(f".{name.lower()}")
     return normalized
+
+
+def parse_size(value: str) -> int:
+    """Parse a whole-number byte size with an optional binary unit."""
+    match = re.fullmatch(r"([+-]?\d+)\s*(KiB|MiB|GiB)?", value.strip(), re.IGNORECASE)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            "size must be a whole number optionally followed by KiB, MiB, or GiB"
+        )
+
+    amount = int(match.group(1))
+    if amount < 0:
+        raise argparse.ArgumentTypeError("size must be zero or greater")
+    unit = (match.group(2) or "").lower()
+    return amount * SIZE_UNITS[unit]
 
 
 def scan_folder(
@@ -256,16 +278,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top", type=int, default=5, help="number of largest files to show")
     parser.add_argument(
         "--min-size",
-        type=int,
+        type=parse_size,
         default=0,
-        metavar="BYTES",
-        help="include only files at least this many bytes",
+        metavar="SIZE",
+        help="include only files at least this size (bytes, KiB, MiB, or GiB)",
     )
     parser.add_argument(
         "--max-size",
-        type=int,
-        metavar="BYTES",
-        help="include only files at most this many bytes",
+        type=parse_size,
+        metavar="SIZE",
+        help="include only files at most this size (bytes, KiB, MiB, or GiB)",
     )
     parser.add_argument(
         "--sort-by",
