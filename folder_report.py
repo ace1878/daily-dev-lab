@@ -233,7 +233,7 @@ def format_size(size: int) -> str:
     raise AssertionError("unreachable")
 
 
-def render_text(report: FolderReport) -> str:
+def render_text(report: FolderReport, show_skipped: bool = False) -> str:
     lines = [
         f"Folder: {report.root}",
         f"Files: {report.files}",
@@ -257,6 +257,8 @@ def render_text(report: FolderReport) -> str:
 
     if report.skipped:
         lines.extend(["", f"Skipped paths: {len(report.skipped)}"])
+        if show_skipped:
+            lines.extend(f"  {path}" for path in sorted(report.skipped))
 
     return "\n".join(lines)
 
@@ -330,6 +332,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DEPTH",
         help="limit folder traversal depth (0 scans only the selected folder)",
     )
+    parser.add_argument(
+        "--show-skipped",
+        action="store_true",
+        help="list paths skipped because of access errors",
+    )
     return parser
 
 
@@ -370,7 +377,7 @@ def main() -> int:
     elif args.json:
         print(json.dumps(asdict(report), ensure_ascii=False, indent=2))
     else:
-        print(render_text(report))
+        print(render_text(report, show_skipped=args.show_skipped))
     return 0
 
 

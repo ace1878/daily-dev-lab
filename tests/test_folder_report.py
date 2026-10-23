@@ -548,6 +548,79 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn("Files: 0", output)
             self.assertEqual(output.count("(no files)"), 2)
 
+    def test_show_skipped_lists_paths_in_name_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "zeta.txt").write_bytes(b"1")
+            (root / "alpha.txt").write_bytes(b"2")
+            (root / "keep.txt").write_bytes(b"3")
+            original_stat = Path.stat
+
+            def fake_stat(path, *args, **kwargs):
+                if path.name in {"alpha.txt", "zeta.txt"}:
+                    raise PermissionError("access denied", str(path))
+                return original_stat(path, *args, **kwargs)
+
+            with patch.object(Path, "stat", new=fake_stat):
+                report = scan_folder(root)
+
+            output = render_text(report, show_skipped=True)
+            alpha_path = str(root / "alpha.txt")
+            zeta_path = str(root / "zeta.txt")
+            self.assertIn("Skipped paths: 2", output)
+            self.assertLess(output.index(alpha_path), output.index(zeta_path))
+            self.assertEqual(report.files, 1)
+
+    def test_show_skipped_omits_section_when_there_are_no_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "readable.txt").write_bytes(b"1")
+
+            output = render_text(scan_folder(root), show_skipped=True)
+
+            self.assertNotIn("Skipped paths:", output)
+
+    def test_default_text_keeps_skipped_count_without_path_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocked = root / "blocked.txt"
+            blocked.write_bytes(b"1")
+            original_stat = Path.stat
+
+            def fake_stat(path, *args, **kwargs):
+                if path == blocked:
+                    raise PermissionError("access denied", str(path))
+                return original_stat(path, *args, **kwargs)
+
+            with patch.object(Path, "stat", new=fake_stat):
+                report = scan_folder(root)
+
+            output = render_text(report)
+            self.assertIn("Skipped paths: 1", output)
+            self.assertNotIn(f"  {blocked}", output)
+
+    def test_main_show_skipped_flag_lists_collected_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocked = root / "blocked.txt"
+            blocked.write_bytes(b"1")
+            original_stat = Path.stat
+
+            def fake_stat(path, *args, **kwargs):
+                if path == blocked:
+                    raise PermissionError("access denied", str(path))
+                return original_stat(path, *args, **kwargs)
+
+            output = io.StringIO()
+            with patch.object(Path, "stat", new=fake_stat), patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--show-skipped"],
+            ), redirect_stdout(output):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn(f"  {blocked}", output.getvalue())
+
 
 class FormatSizeTests(unittest.TestCase):
     def test_formats_binary_units(self) -> None:
@@ -594,6 +667,43 @@ class ParseSizeTests(unittest.TestCase):
 
 
 class CsvOutputTests(unittest.TestCase):
+    def test_show_skipped_does_not_change_json_or_csv_output_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"123")
+
+            json_output = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--show-skipped", "--json"],
+            ), redirect_stdout(json_output):
+                json_exit_code = main()
+            json_result = json.loads(json_output.getvalue())
+
+            csv_output = root / "report.csv"
+            with patch(
+                "sys.argv",
+                [
+                    "folder_report.py",
+                    directory,
+                    "--show-skipped",
+                    "--csv",
+                    str(csv_output),
+                ],
+            ), redirect_stdout(io.StringIO()):
+                csv_exit_code = main()
+            with csv_output.open(encoding="utf-8", newline="") as csv_file:
+                csv_rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(json_exit_code, 0)
+            self.assertEqual(json_result["files"], 1)
+            self.assertEqual(json_result["skipped"], [])
+            self.assertEqual(csv_exit_code, 0)
+            self.assertEqual(
+                csv_rows,
+                [{"extension": ".txt", "files": "1", "size_bytes": "3"}],
+            )
+
     def test_writes_extension_statistics_with_expected_columns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

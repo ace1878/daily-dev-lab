@@ -26,6 +26,20 @@ python folder_report.py . --include-hidden
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
 python folder_report.py . --extension txt --extension .csv
 python folder_report.py . --max-depth 1
+python folder_report.py . --show-skipped
+```
+
+분석 중 접근 오류가 발생한 경로는 기본적으로 개수만 표시합니다.
+`--show-skipped`를 사용하면 건너뛴 경로도 이름 오름차순으로 확인할 수 있습니다.
+건너뛴 경로가 없으면 해당 구역은 출력하지 않습니다. JSON의 `skipped` 필드와
+CSV 출력 방식은 기존과 동일합니다.
+
+```powershell
+# 접근 오류로 건너뛴 경로의 개수와 목록 표시
+python folder_report.py . --show-skipped
+
+# 깊이·확장자 필터와 함께 사용
+python folder_report.py . --max-depth 2 --extension py --show-skipped
 ```
 
 `--max-depth DEPTH`를 사용하면 기준 폴더에서 지정한 깊이까지만 탐색합니다.
