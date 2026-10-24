@@ -272,6 +272,16 @@ def write_csv(report: FolderReport, output: Path) -> None:
             writer.writerow([item.extension, item.files, item.size])
 
 
+def render_json(report: FolderReport) -> str:
+    """Return the report using the command's JSON representation."""
+    return json.dumps(asdict(report), ensure_ascii=False, indent=2)
+
+
+def write_json(report: FolderReport, output: Path) -> None:
+    """Write the complete report to a UTF-8 JSON file."""
+    output.write_text(render_json(report), encoding="utf-8")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Summarize file counts and sizes in a folder."
@@ -306,6 +316,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="OUTPUT.csv",
         help="save extension statistics as CSV",
+    )
+    output_group.add_argument(
+        "--json-output",
+        type=Path,
+        metavar="OUTPUT.json",
+        help="save the complete report as JSON",
     )
     parser.add_argument(
         "--include-hidden",
@@ -345,9 +361,11 @@ def main() -> int:
     scan_root = Path(args.path).expanduser().resolve()
     exclude_patterns = list(args.exclude)
     csv_output = args.csv.expanduser().resolve() if args.csv else None
-    if csv_output:
+    json_output = args.json_output.expanduser().resolve() if args.json_output else None
+    output_path = csv_output or json_output
+    if output_path:
         try:
-            exclude_patterns.append(csv_output.relative_to(scan_root).as_posix())
+            exclude_patterns.append(output_path.relative_to(scan_root).as_posix())
         except ValueError:
             pass
 
@@ -374,8 +392,18 @@ def main() -> int:
             print(f"Error: Could not save CSV to {csv_output}: {error}", file=sys.stderr)
             return 2
         print(f"CSV saved to: {csv_output}")
+    elif json_output:
+        try:
+            write_json(report, json_output)
+        except OSError as error:
+            print(
+                f"Error: Could not save JSON to {json_output}: {error}",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"JSON saved to: {json_output}")
     elif args.json:
-        print(json.dumps(asdict(report), ensure_ascii=False, indent=2))
+        print(render_json(report))
     else:
         print(render_text(report, show_skipped=args.show_skipped))
     return 0

@@ -18,6 +18,7 @@
 python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10
 python folder_report.py . --json
+python folder_report.py . --json-output report.json
 python folder_report.py . --csv report.csv
 python folder_report.py . --min-size 1MiB
 python folder_report.py . --max-size 2GiB
@@ -119,9 +120,21 @@ python folder_report.py . --min-size 1KiB --max-size 1mIb
 python folder_report.py . --min-size 1024 --max-size 1048576 --exclude "*.log" --sort-by size --csv report.csv
 ```
 
+`--json-output OUTPUT.json`을 사용하면 `--json`으로 화면에 표시하는 것과 같은
+전체 분석 결과를 UTF-8 JSON 파일로 저장합니다. 출력 파일이 분석 폴더 안에
+있어도 해당 파일 자체는 통계에서 제외합니다.
+
+```powershell
+# 전체 분석 결과를 report.json으로 저장
+python folder_report.py . --json-output report.json
+
+# 기존 필터와 함께 JSON 파일로 저장
+python folder_report.py . --extension py --max-depth 2 --json-output report.json
+```
+
 `--csv OUTPUT.csv`를 사용하면 확장자별 통계를 CSV 파일로 저장합니다. CSV 열은
-`extension`, `files`, `size_bytes` 순서입니다. `--json`과 `--csv`는 동시에 사용할
-수 없습니다.
+`extension`, `files`, `size_bytes` 순서입니다. `--json`, `--json-output`, `--csv`는
+서로 동시에 사용할 수 없습니다.
 
 ```powershell
 # 확장자별 파일 수와 바이트 용량을 report.csv로 저장

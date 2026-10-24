@@ -14,9 +14,11 @@ from folder_report import (
     format_size,
     main,
     parse_size,
+    render_json,
     render_text,
     scan_folder,
     write_csv,
+    write_json,
 )
 
 
@@ -667,6 +669,115 @@ class ParseSizeTests(unittest.TestCase):
 
 
 class CsvOutputTests(unittest.TestCase):
+    def test_json_output_creates_utf8_file_with_expected_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "한글.txt").write_bytes(b"123")
+            output = root / "report.json"
+
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--json-output", str(output)],
+            ), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            raw_json = output.read_bytes()
+            result = json.loads(raw_json.decode("utf-8"))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(result["files"], 1)
+            self.assertEqual(result["size"], 3)
+            self.assertEqual(result["largest_files"][0]["path"], "한글.txt")
+            self.assertIn("한글.txt".encode("utf-8"), raw_json)
+
+    def test_json_output_matches_existing_json_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"123")
+
+            stdout = io.StringIO()
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--json"],
+            ), redirect_stdout(stdout):
+                stdout_exit_code = main()
+
+            output = root / "report.json"
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--json-output", str(output)],
+            ), redirect_stdout(io.StringIO()):
+                file_exit_code = main()
+
+            self.assertEqual(stdout_exit_code, 0)
+            self.assertEqual(file_exit_code, 0)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                json.loads(stdout.getvalue()),
+            )
+
+    def test_parser_rejects_json_output_with_other_output_options(self) -> None:
+        for arguments in (
+            [".", "--json", "--json-output", "report.json"],
+            [".", "--csv", "report.csv", "--json-output", "report.json"],
+        ):
+            with self.subTest(arguments=arguments):
+                error_output = io.StringIO()
+                with redirect_stderr(error_output), self.assertRaises(
+                    SystemExit
+                ) as context:
+                    build_parser().parse_args(arguments)
+
+                self.assertEqual(context.exception.code, 2)
+                self.assertIn("not allowed with argument", error_output.getvalue())
+
+    def test_main_does_not_include_existing_json_output_in_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"123")
+            output = root / "report.json"
+            output.write_text('{"old": "report"}', encoding="utf-8")
+
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--json-output", str(output)],
+            ), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            result = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(result["files"], 1)
+            self.assertEqual(
+                result["extensions"],
+                [{"extension": ".txt", "files": 1, "size": 3}],
+            )
+
+    def test_main_reports_json_save_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "missing" / "report.json"
+            error_output = io.StringIO()
+
+            with patch(
+                "sys.argv",
+                ["folder_report.py", directory, "--json-output", str(output)],
+            ), redirect_stderr(error_output):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("Could not save JSON", error_output.getvalue())
+            self.assertIn(str(output), error_output.getvalue())
+
+    def test_json_helpers_share_the_same_representation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"123")
+            report = scan_folder(root)
+            output = root / "report.json"
+
+            write_json(report, output)
+
+            self.assertEqual(output.read_text(encoding="utf-8"), render_json(report))
+
     def test_show_skipped_does_not_change_json_or_csv_output_modes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
