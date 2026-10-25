@@ -8,6 +8,7 @@ import heapq
 import json
 import os
 import re
+import string
 import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -282,6 +283,54 @@ def write_json(report: FolderReport, output: Path) -> None:
     output.write_text(render_json(report), encoding="utf-8")
 
 
+def _markdown_text(value: str) -> str:
+    """Keep user-supplied text literal inside Markdown paragraphs and tables."""
+    return "".join(
+        f"&#{ord(character)};"
+        if character in string.punctuation or ord(character) < 32
+        else character
+        for character in value
+    )
+
+
+def render_markdown(report: FolderReport) -> str:
+    """Render the existing report data as Markdown tables."""
+    lines = [
+        "# Folder Report",
+        "",
+        f"- Folder: {_markdown_text(report.root)}",
+        f"- Files: {report.files}",
+        f"- Total size: {format_size(report.size)} ({report.size} bytes)",
+        f"- Skipped paths: {len(report.skipped)}",
+        "",
+        "## By extension",
+        "",
+    ]
+    if report.extensions:
+        lines.extend(["| Extension | Files | Size (bytes) |", "| --- | ---: | ---: |"])
+        lines.extend(
+            f"| {_markdown_text(item.extension)} | {item.files} | {item.size} |"
+            for item in report.extensions
+        )
+    else:
+        lines.append("(no files)")
+    lines.extend(["", "## Largest files", ""])
+    if report.largest_files:
+        lines.extend(["| Path | Size (bytes) |", "| --- | ---: |"])
+        lines.extend(
+            f"| {_markdown_text(item.path)} | {item.size} |"
+            for item in report.largest_files
+        )
+    else:
+        lines.append("(no files)")
+    return "\n".join(lines) + "\n"
+
+
+def write_markdown(report: FolderReport, output: Path) -> None:
+    """Save a Markdown report using UTF-8."""
+    output.write_text(render_markdown(report), encoding="utf-8")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Summarize file counts and sizes in a folder."
@@ -323,6 +372,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="OUTPUT.json",
         help="save the complete report as JSON",
     )
+    output_group.add_argument(
+        "--markdown-output",
+        type=Path,
+        metavar="OUTPUT.md",
+        help="save the report as Markdown",
+    )
     parser.add_argument(
         "--include-hidden",
         action="store_true",
@@ -362,7 +417,10 @@ def main() -> int:
     exclude_patterns = list(args.exclude)
     csv_output = args.csv.expanduser().resolve() if args.csv else None
     json_output = args.json_output.expanduser().resolve() if args.json_output else None
-    output_path = csv_output or json_output
+    markdown_output = (
+        args.markdown_output.expanduser().resolve() if args.markdown_output else None
+    )
+    output_path = csv_output or json_output or markdown_output
     if output_path:
         try:
             exclude_patterns.append(output_path.relative_to(scan_root).as_posix())
@@ -402,6 +460,16 @@ def main() -> int:
             )
             return 2
         print(f"JSON saved to: {json_output}")
+    elif markdown_output:
+        try:
+            write_markdown(report, markdown_output)
+        except OSError as error:
+            print(
+                f"Error: Could not save Markdown to {markdown_output}: {error}",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"Markdown saved to: {markdown_output}")
     elif args.json:
         print(render_json(report))
     else:

@@ -19,6 +19,7 @@ python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10
 python folder_report.py . --json
 python folder_report.py . --json-output report.json
+python folder_report.py . --markdown-output report.md
 python folder_report.py . --csv report.csv
 python folder_report.py . --min-size 1MiB
 python folder_report.py . --max-size 2GiB
@@ -133,12 +134,26 @@ python folder_report.py . --extension py --max-depth 2 --json-output report.json
 ```
 
 `--csv OUTPUT.csv`를 사용하면 확장자별 통계를 CSV 파일로 저장합니다. CSV 열은
-`extension`, `files`, `size_bytes` 순서입니다. `--json`, `--json-output`, `--csv`는
+`extension`, `files`, `size_bytes` 순서입니다. `--json`, `--json-output`, `--csv`,
+`--markdown-output`은
 서로 동시에 사용할 수 없습니다.
 
 ```powershell
 # 확장자별 파일 수와 바이트 용량을 report.csv로 저장
 python folder_report.py . --csv report.csv
+```
+
+`--markdown-output OUTPUT.md`를 사용하면 제목, 기준 폴더, 파일 수, 전체 용량,
+건너뛴 경로 수와 함께 확장자별 통계 및 큰 파일 목록을 Markdown 표로 저장합니다.
+용량 표의 단위는 바이트이며 기존 정렬 기준과 `--top` 설정을 따릅니다.
+빈 결과는 `(no files)`로 표시합니다. 파일은 UTF-8로 저장하며, 출력 파일 자체는
+분석 대상에서 제외합니다. 기존 파일을 지정하면 덮어씁니다.
+경로의 Markdown 특수문자는 문자 참조로 저장하여 표나 링크 문법으로 해석되지
+않게 하며, Markdown 미리보기에서는 원래 문자로 표시됩니다.
+
+```powershell
+python folder_report.py . --markdown-output report.md
+python folder_report.py . --extension py --max-depth 2 --sort-by size --markdown-output report.md
 ```
 
 기본값에서는 숨김 파일·폴더와 `__pycache__`를 제외합니다.

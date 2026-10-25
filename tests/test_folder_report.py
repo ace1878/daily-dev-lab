@@ -4,17 +4,20 @@ import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from folder_report import (
+    FileEntry,
     NO_EXTENSION,
     build_parser,
     format_size,
     main,
     parse_size,
     render_json,
+    render_markdown,
     render_text,
     scan_folder,
     write_csv,
@@ -666,6 +669,115 @@ class ParseSizeTests(unittest.TestCase):
 
         self.assertEqual(arguments.min_size, 2 * 1024)
         self.assertEqual(arguments.max_size, 3 * 1024**2)
+
+
+class MarkdownOutputTests(unittest.TestCase):
+    def test_creates_markdown_with_correct_statistics_and_excludes_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "한글.txt").write_bytes(b"123")
+            (root / "other.txt").write_bytes(b"12")
+            (root / "image.bin").write_bytes(b"123456")
+            output = root / "report.md"
+            output.write_text("previous report", encoding="utf-8")
+
+            with patch("sys.argv", [
+                "folder_report.py", directory, "--sort-by", "size",
+                "--markdown-output", str(output),
+            ]), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            text = output.read_text(encoding="utf-8")
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(text.startswith("# Folder Report\n"))
+            self.assertIn("- Files: 3", text)
+            self.assertIn("(11 bytes)", text)
+            self.assertIn("| &#46;txt | 2 | 5 |", text)
+            self.assertIn("| &#46;bin | 1 | 6 |", text)
+            self.assertLess(text.index("&#46;bin"), text.index("&#46;txt"))
+            self.assertIn("| 한글&#46;txt | 3 |", text)
+            self.assertNotIn("| report&#46;md |", text)
+
+    def test_empty_folder_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            text = render_markdown(scan_folder(Path(directory)))
+
+            self.assertIn("- Files: 0", text)
+            self.assertIn("(0 bytes)", text)
+            self.assertEqual(text.count("(no files)"), 2)
+
+    def test_special_characters_in_real_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "한글[link]`&_.txt").write_bytes(b"123")
+            text = render_markdown(scan_folder(root))
+
+            self.assertIn(
+                "| 한글&#91;link&#93;&#96;&#38;&#95;&#46;txt | 3 |", text
+            )
+
+    def test_paths_cannot_inject_markdown_rows_links_or_html(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report = replace(
+                scan_folder(Path(directory)),
+                root="root\n# heading",
+                largest_files=[FileEntry("[x](url)|`<tag>\\\nrow.txt", 7)],
+            )
+            text = render_markdown(report)
+
+            self.assertIn("root&#10;&#35; heading", text)
+            row = next(line for line in text.splitlines() if "&#91;x&#93;" in line)
+            self.assertEqual(row.count("|"), 3)
+            self.assertIn("&#124;&#96;&#60;tag&#62;&#92;&#10;row&#46;txt", row)
+            self.assertNotIn("<tag>", text)
+
+    def test_rejects_other_output_options(self) -> None:
+        for option in (["--json"], ["--json-output", "report.json"],
+                       ["--csv", "report.csv"]):
+            with self.subTest(option=option):
+                error = io.StringIO()
+                with redirect_stderr(error), self.assertRaises(SystemExit) as context:
+                    build_parser().parse_args(
+                        [".", "--markdown-output", "report.md", *option]
+                    )
+                self.assertEqual(context.exception.code, 2)
+                self.assertIn("not allowed with argument", error.getvalue())
+
+    def test_reports_save_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "missing" / "report.md"
+            error = io.StringIO()
+            with patch("sys.argv", [
+                "folder_report.py", directory, "--markdown-output", str(output),
+            ]), redirect_stderr(error):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("Could not save Markdown", error.getvalue())
+
+    def test_works_with_existing_filters_and_depth_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.txt").write_bytes(b"1234")
+            (root / "small.txt").write_bytes(b"1")
+            (root / "large.txt").write_bytes(b"123456")
+            (root / "skip.txt").write_bytes(b"1234")
+            (root / "other.bin").write_bytes(b"1234")
+            child = root / "child"
+            child.mkdir()
+            (child / "deep.txt").write_bytes(b"1234")
+            output = root / "report.md"
+            with patch("sys.argv", [
+                "folder_report.py", directory, "--extension", "TXT",
+                "--min-size", "2", "--max-size", "5", "--exclude", "skip.txt",
+                "--max-depth", "0", "--markdown-output", str(output),
+            ]), redirect_stdout(io.StringIO()):
+                exit_code = main()
+
+            text = output.read_text(encoding="utf-8")
+            self.assertEqual(exit_code, 0)
+            self.assertIn("- Files: 1", text)
+            self.assertIn("| keep&#46;txt | 4 |", text)
 
 
 class CsvOutputTests(unittest.TestCase):
