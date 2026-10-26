@@ -147,13 +147,28 @@ python folder_report.py . --csv report.csv
 건너뛴 경로 수와 함께 확장자별 통계 및 큰 파일 목록을 Markdown 표로 저장합니다.
 용량 표의 단위는 바이트이며 기존 정렬 기준과 `--top` 설정을 따릅니다.
 빈 결과는 `(no files)`로 표시합니다. 파일은 UTF-8로 저장하며, 출력 파일 자체는
-분석 대상에서 제외합니다. 기존 파일을 지정하면 덮어씁니다.
+분석 대상에서 제외합니다. 기존 파일을 덮어쓰려면 `--force`를 지정해야 합니다.
 경로의 Markdown 특수문자는 문자 참조로 저장하여 표나 링크 문법으로 해석되지
 않게 하며, Markdown 미리보기에서는 원래 문자로 표시됩니다.
 
 ```powershell
 python folder_report.py . --markdown-output report.md
 python folder_report.py . --extension py --max-depth 2 --sort-by size --markdown-output report.md
+```
+
+CSV, JSON, Markdown 보고서는 기본적으로 새 파일로만 저장합니다. 출력 파일이
+이미 존재하면 오류를 표시하고 기존 내용을 보존합니다. 의도적으로 덮어쓸 때는
+`--force`를 사용합니다. 새 파일은 배타적 생성 모드로 열어, 저장 직전에 다른
+프로세스가 같은 이름의 파일을 생성하더라도 덮어쓰지 않습니다.
+
+```powershell
+# 새 보고서 생성(이미 존재하면 오류)
+python folder_report.py . --csv report.csv
+
+# 기존 보고서를 덮어쓰기
+python folder_report.py . --csv report.csv --force
+python folder_report.py . --json-output report.json --force
+python folder_report.py . --markdown-output report.md --force
 ```
 
 기본값에서는 숨김 파일·폴더와 `__pycache__`를 제외합니다.

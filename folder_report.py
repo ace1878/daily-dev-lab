@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TextIO
 
 
 NO_EXTENSION = "[no extension]"
@@ -264,9 +264,19 @@ def render_text(report: FolderReport, show_skipped: bool = False) -> str:
     return "\n".join(lines)
 
 
-def write_csv(report: FolderReport, output: Path) -> None:
+def _open_output(output: Path, force: bool = False, newline: str | None = None) -> TextIO:
+    """Create exclusively unless overwriting was explicitly requested."""
+    try:
+        return output.open("w" if force else "x", encoding="utf-8", newline=newline)
+    except FileExistsError as error:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Use --force to overwrite."
+        ) from error
+
+
+def write_csv(report: FolderReport, output: Path, force: bool = False) -> None:
     """Write extension statistics to a CSV file."""
-    with output.open("w", encoding="utf-8", newline="") as csv_file:
+    with _open_output(output, force=force, newline="") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(["extension", "files", "size_bytes"])
         for item in report.extensions:
@@ -278,9 +288,10 @@ def render_json(report: FolderReport) -> str:
     return json.dumps(asdict(report), ensure_ascii=False, indent=2)
 
 
-def write_json(report: FolderReport, output: Path) -> None:
+def write_json(report: FolderReport, output: Path, force: bool = False) -> None:
     """Write the complete report to a UTF-8 JSON file."""
-    output.write_text(render_json(report), encoding="utf-8")
+    with _open_output(output, force=force) as json_file:
+        json_file.write(render_json(report))
 
 
 def _markdown_text(value: str) -> str:
@@ -326,9 +337,10 @@ def render_markdown(report: FolderReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_markdown(report: FolderReport, output: Path) -> None:
+def write_markdown(report: FolderReport, output: Path, force: bool = False) -> None:
     """Save a Markdown report using UTF-8."""
-    output.write_text(render_markdown(report), encoding="utf-8")
+    with _open_output(output, force=force) as markdown_file:
+        markdown_file.write(render_markdown(report))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -408,6 +420,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list paths skipped because of access errors",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="allow overwriting an existing CSV, JSON, or Markdown output file",
+    )
     return parser
 
 
@@ -445,14 +462,14 @@ def main() -> int:
 
     if csv_output:
         try:
-            write_csv(report, csv_output)
+            write_csv(report, csv_output, force=args.force)
         except OSError as error:
             print(f"Error: Could not save CSV to {csv_output}: {error}", file=sys.stderr)
             return 2
         print(f"CSV saved to: {csv_output}")
     elif json_output:
         try:
-            write_json(report, json_output)
+            write_json(report, json_output, force=args.force)
         except OSError as error:
             print(
                 f"Error: Could not save JSON to {json_output}: {error}",
@@ -462,7 +479,7 @@ def main() -> int:
         print(f"JSON saved to: {json_output}")
     elif markdown_output:
         try:
-            write_markdown(report, markdown_output)
+            write_markdown(report, markdown_output, force=args.force)
         except OSError as error:
             print(
                 f"Error: Could not save Markdown to {markdown_output}: {error}",

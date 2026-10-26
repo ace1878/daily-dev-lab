@@ -22,6 +22,7 @@ from folder_report import (
     scan_folder,
     write_csv,
     write_json,
+    write_markdown,
 )
 
 
@@ -671,6 +672,86 @@ class ParseSizeTests(unittest.TestCase):
         self.assertEqual(arguments.max_size, 3 * 1024**2)
 
 
+class OutputOverwriteTests(unittest.TestCase):
+    outputs = (("--csv", "csv"), ("--json-output", "json"),
+               ("--markdown-output", "md"))
+
+    def test_new_files_are_created_in_all_formats(self) -> None:
+        for option, suffix in self.outputs:
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"123")
+                output = root / f"report.{suffix}"
+                with patch("sys.argv", [
+                    "folder_report.py", directory, option, str(output),
+                ]), redirect_stdout(io.StringIO()):
+                    exit_code = main()
+                self.assertEqual(exit_code, 0)
+                self.assertTrue(output.read_bytes())
+
+    def test_existing_files_are_preserved_and_error_explains_force(self) -> None:
+        for option, suffix in self.outputs:
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / f"report.{suffix}"
+                original = b"original contents\x00\xff"
+                output.write_bytes(original)
+                error = io.StringIO()
+                stdout = io.StringIO()
+                with patch("sys.argv", [
+                    "folder_report.py", directory, option, str(output),
+                ]), redirect_stderr(error), redirect_stdout(stdout):
+                    exit_code = main()
+                self.assertEqual(exit_code, 2)
+                self.assertEqual(output.read_bytes(), original)
+                self.assertIn("already exists", error.getvalue())
+                self.assertIn("--force", error.getvalue())
+                self.assertIn(str(output), error.getvalue())
+                self.assertNotIn("saved to:", stdout.getvalue())
+
+    def test_force_overwrites_with_valid_report_in_all_formats(self) -> None:
+        for option, suffix in self.outputs:
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"123")
+                output = root / f"report.{suffix}"
+                output.write_bytes(b"old contents" * 100)
+                with patch("sys.argv", [
+                    "folder_report.py", directory, option, str(output), "--force",
+                ]), redirect_stdout(io.StringIO()):
+                    exit_code = main()
+                self.assertEqual(exit_code, 0)
+                text = output.read_text(encoding="utf-8")
+                self.assertNotIn("old contents", text)
+                if suffix == "json":
+                    self.assertEqual(json.loads(text)["files"], 1)
+                elif suffix == "csv":
+                    self.assertEqual(list(csv.DictReader(io.StringIO(text))), [
+                        {"extension": ".txt", "files": "1", "size_bytes": "3"}
+                    ])
+                else:
+                    self.assertIn("- Files: 1", text)
+
+    def test_file_created_at_open_time_is_not_overwritten(self) -> None:
+        for writer in (write_csv, write_json, write_markdown):
+            with self.subTest(writer=writer.__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report = scan_folder(root)
+                output = root / "raced-output"
+                original_open = Path.open
+                original = b"created by another process"
+
+                def racing_open(path, mode="r", *args, **kwargs):
+                    if path == output:
+                        with original_open(path, "wb") as competing_file:
+                            competing_file.write(original)
+                    return original_open(path, mode, *args, **kwargs)
+
+                with patch.object(Path, "open", new=racing_open):
+                    with self.assertRaises(FileExistsError):
+                        writer(report, output)
+                self.assertEqual(output.read_bytes(), original)
+
+
 class MarkdownOutputTests(unittest.TestCase):
     def test_creates_markdown_with_correct_statistics_and_excludes_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -683,7 +764,7 @@ class MarkdownOutputTests(unittest.TestCase):
 
             with patch("sys.argv", [
                 "folder_report.py", directory, "--sort-by", "size",
-                "--markdown-output", str(output),
+                "--markdown-output", str(output), "--force",
             ]), redirect_stdout(io.StringIO()):
                 exit_code = main()
 
@@ -851,7 +932,7 @@ class CsvOutputTests(unittest.TestCase):
 
             with patch(
                 "sys.argv",
-                ["folder_report.py", directory, "--json-output", str(output)],
+                ["folder_report.py", directory, "--json-output", str(output), "--force"],
             ), redirect_stdout(io.StringIO()):
                 exit_code = main()
 
@@ -981,7 +1062,7 @@ class CsvOutputTests(unittest.TestCase):
 
             with patch(
                 "sys.argv",
-                ["folder_report.py", str(root), "--csv", str(output)],
+                ["folder_report.py", str(root), "--csv", str(output), "--force"],
             ), redirect_stdout(io.StringIO()):
                 exit_code = main()
 
