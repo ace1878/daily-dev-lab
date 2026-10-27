@@ -29,6 +29,23 @@ python folder_report.py . --exclude "*.log" --exclude "node_modules"
 python folder_report.py . --extension txt --extension .csv
 python folder_report.py . --max-depth 1
 python folder_report.py . --show-skipped
+python folder_report.py . --strict
+```
+
+`--strict`를 사용하면 분석 중 접근 오류로 건너뛴 경로가 하나라도 있을 때
+오류 메시지를 stderr에 출력하고 종료 코드 `3`을 반환합니다. 이 경우 화면 보고서와
+CSV·JSON·Markdown 파일을 출력하지 않으며, `--force`를 함께 지정해도 기존 출력
+파일 내용을 보존합니다. 접근 오류가 없으면 평소처럼 보고서를 출력하고 종료 코드
+`0`을 반환합니다. 옵션을 생략하면 접근 가능한 파일의 분석 결과를 기존처럼 출력합니다.
+필터로 제외되거나 깊이 제한 밖에 있는 경로는 접근 오류로 취급하지 않습니다.
+
+```powershell
+# 접근 오류가 있으면 실패 처리
+python folder_report.py . --strict
+$LASTEXITCODE
+
+# 분석에 접근 오류가 없을 때만 JSON 저장
+python folder_report.py . --strict --json-output report.json
 ```
 
 분석 중 접근 오류가 발생한 경로는 기본적으로 개수만 표시합니다.

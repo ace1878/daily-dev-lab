@@ -672,6 +672,144 @@ class ParseSizeTests(unittest.TestCase):
         self.assertEqual(arguments.max_size, 3 * 1024**2)
 
 
+class StrictModeTests(unittest.TestCase):
+    output_modes = ((), ("--json",), ("--csv", "report.csv"),
+                    ("--json-output", "report.json"),
+                    ("--markdown-output", "report.md"))
+
+    def run_analysis(self, root, arguments, deny_access=False):
+        """Simulate a file access failure without changing OS permissions."""
+        arguments = list(arguments)
+        for index, argument in enumerate(arguments):
+            if argument in {"--csv", "--json-output", "--markdown-output"}:
+                arguments[index + 1] = str(root / arguments[index + 1])
+        blocked = root / "blocked.txt"
+        original_stat = Path.stat
+
+        def fake_stat(path, *args, **kwargs):
+            if deny_access and path == blocked:
+                raise PermissionError(13, "access denied", str(path))
+            return original_stat(path, *args, **kwargs)
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(Path, "stat", new=fake_stat), patch(
+            "sys.argv", ["folder_report.py", str(root), *arguments]
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main()
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def test_successful_strict_analysis_in_all_output_modes(self) -> None:
+        for options in self.output_modes:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"123")
+
+                code, stdout, stderr = self.run_analysis(root, ["--strict", *options])
+
+                self.assertEqual(code, 0)
+                self.assertEqual(stderr, "")
+                if len(options) == 2:
+                    self.assertTrue((root / options[1]).is_file())
+
+    def test_file_error_returns_three_without_output_or_report_files(self) -> None:
+        for options in self.output_modes:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "blocked.txt").write_bytes(b"123")
+
+                code, stdout, stderr = self.run_analysis(
+                    root, ["--strict", *options], deny_access=True
+                )
+
+                self.assertEqual(code, 3)
+                self.assertEqual(stdout, "")
+                self.assertIn("1 path(s) were skipped", stderr)
+                self.assertIn("access errors", stderr)
+                if len(options) == 2:
+                    self.assertFalse((root / options[1]).exists())
+
+    def test_existing_reports_preserved_even_with_force(self) -> None:
+        for options in self.output_modes[2:]:
+            for force in ([], ["--force"]):
+                with self.subTest(options=options, force=force):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / "blocked.txt").write_bytes(b"123")
+                        output = root / options[1]
+                        original = b"existing report\x00\xff"
+                        output.write_bytes(original)
+
+                        code, stdout, stderr = self.run_analysis(
+                            root, ["--strict", *options, *force], deny_access=True
+                        )
+
+                        self.assertEqual(code, 3)
+                        self.assertEqual(output.read_bytes(), original)
+                        self.assertEqual(stdout, "")
+
+    def test_non_strict_keeps_partial_reports_in_all_output_modes(self) -> None:
+        for options in self.output_modes:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "blocked.txt").write_bytes(b"123")
+                (root / "keep.txt").write_bytes(b"12")
+
+                code, stdout, stderr = self.run_analysis(
+                    root, list(options), deny_access=True
+                )
+
+                self.assertEqual(code, 0)
+                self.assertEqual(stderr, "")
+                if len(options) == 2:
+                    self.assertTrue((root / options[1]).is_file())
+                elif options == ("--json",):
+                    report = json.loads(stdout)
+                    self.assertEqual(report["files"], 1)
+                    self.assertEqual(report["skipped"], [str(root / "blocked.txt")])
+                else:
+                    self.assertIn("Skipped paths: 1", stdout)
+
+    def test_directory_walk_error_also_fails_strict_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def fake_walk(scan_root, onerror, followlinks):
+                yield str(scan_root), [], []
+                onerror(PermissionError(13, "access denied", str(root / "blocked")))
+
+            with patch("folder_report.os.walk", side_effect=fake_walk):
+                code, stdout, stderr = self.run_analysis(root, ["--strict"])
+
+            self.assertEqual(code, 3)
+            self.assertEqual(stdout, "")
+            self.assertIn("1 path(s) were skipped", stderr)
+
+    def test_filtered_and_depth_limited_paths_do_not_trigger_strict_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "blocked.txt").write_bytes(b"1")
+            (root / "keep.py").write_bytes(b"1234")
+            child = root / "child"
+            child.mkdir()
+            (child / "blocked.txt").write_bytes(b"12")
+
+            code, stdout, stderr = self.run_analysis(
+                root,
+                ["--strict", "--exclude", "blocked.txt", "--max-depth", "0",
+                 "--extension", "py", "--min-size", "2", "--max-size", "5",
+                 "--sort-by", "size", "--json"],
+                deny_access=True,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            report = json.loads(stdout)
+            self.assertEqual(report["files"], 1)
+            self.assertEqual(report["size"], 4)
+            self.assertEqual(report["skipped"], [])
+
+
 class OutputOverwriteTests(unittest.TestCase):
     outputs = (("--csv", "csv"), ("--json-output", "json"),
                ("--markdown-output", "md"))

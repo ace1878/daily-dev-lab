@@ -425,6 +425,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow overwriting an existing CSV, JSON, or Markdown output file",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail with exit code 3 if any paths were skipped because of access errors",
+    )
     return parser
 
 
@@ -459,6 +464,14 @@ def main() -> int:
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")
         return 2
+
+    if args.strict and report.skipped:
+        print(
+            f"Error: Strict analysis failed: {len(report.skipped)} path(s) were skipped "
+            "because of access errors. No report was written.",
+            file=sys.stderr,
+        )
+        return 3
 
     if csv_output:
         try:
