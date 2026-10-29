@@ -12,6 +12,32 @@
 
 파일을 읽거나 변경하지 않고 이름과 크기만 확인합니다. 심볼릭 링크는 따라가지 않습니다.
 
+### 설치
+
+Python 3.10 이상이 필요합니다. 저장소 폴더에서 가상환경을 만들고 editable 모드로
+설치하면 `folder-report` 명령을 사용할 수 있습니다. editable 설치에서는 소스 수정이
+바로 반영됩니다.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\folder-report.exe --help
+.\.venv\Scripts\folder-report.exe .
+```
+
+가상환경을 활성화하면 짧은 명령으로 실행할 수 있습니다.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+folder-report .
+folder-report . --extension py --max-depth 2 --json
+folder-report . --markdown-output report.md
+```
+
+기존 `python folder_report.py ...` 실행 방식과 모든 옵션도 그대로 사용할 수 있습니다.
+설치는 `pyproject.toml`의 setuptools 설정을 사용하며 `build/`, `dist/`, `*.egg-info/`는
+Git 추적에서 제외합니다.
+
 ### 사용법
 
 ```powershell
