@@ -75,6 +75,22 @@ def _is_excluded(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     )
 
 
+def read_exclude_patterns(paths: Iterable[Path]) -> list[str]:
+    """Read one pattern per line, ignoring blank lines and full-line comments."""
+    patterns: list[str] = []
+    for path in paths:
+        path = path.expanduser()
+        try:
+            with path.open(encoding="utf-8-sig") as pattern_file:
+                for line in pattern_file:
+                    pattern = line.strip()
+                    if pattern and not pattern.startswith("#"):
+                        patterns.append(pattern)
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f"--exclude-from: Could not read {path}: {error}") from error
+    return patterns
+
+
 def _normalize_extensions(extensions: Iterable[str]) -> set[str]:
     """Return extensions in lowercase with one leading dot."""
     normalized: set[str] = set()
@@ -410,6 +426,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="include only this file extension (repeatable)",
     )
     parser.add_argument(
+        "--exclude-from",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="read exclude patterns from a UTF-8 file (repeatable)",
+    )
+    parser.add_argument(
         "--max-depth",
         type=int,
         metavar="DEPTH",
@@ -437,6 +461,11 @@ def main() -> int:
     args = build_parser().parse_args()
     scan_root = Path(args.path).expanduser().resolve()
     exclude_patterns = list(args.exclude)
+    try:
+        exclude_patterns.extend(read_exclude_patterns(args.exclude_from))
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
     csv_output = args.csv.expanduser().resolve() if args.csv else None
     json_output = args.json_output.expanduser().resolve() if args.json_output else None
     markdown_output = (

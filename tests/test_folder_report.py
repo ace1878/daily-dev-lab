@@ -16,6 +16,7 @@ from folder_report import (
     format_size,
     main,
     parse_size,
+    read_exclude_patterns,
     render_json,
     render_markdown,
     render_text,
@@ -670,6 +671,100 @@ class ParseSizeTests(unittest.TestCase):
 
         self.assertEqual(arguments.min_size, 2 * 1024)
         self.assertEqual(arguments.max_size, 3 * 1024**2)
+
+
+class ExcludeFromTests(unittest.TestCase):
+    def test_reads_utf8_patterns_and_ignores_blanks_and_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "patterns.txt"
+            config.write_text(
+                "\ufeff# comment\n\n  # indented comment\n  *.log  \n한글/\nname#tag.txt\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                read_exclude_patterns([config]), ["*.log", "한글/", "name#tag.txt"]
+            )
+
+    def test_repeated_files_combine_with_exclude_and_filter_all_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "keep.txt").write_bytes(b"123")
+            (root / "app.log").write_bytes(b"12345")
+            (root / "cache.tmp").write_bytes(b"123456")
+            dependency = root / "node_modules"
+            dependency.mkdir()
+            (dependency / "large.bin").write_bytes(b"x" * 10)
+            first = Path(directory) / "first.txt"
+            second = Path(directory) / "second.txt"
+            first.write_text("# comment\n\n*.log\n", encoding="utf-8")
+            second.write_text("node_modules\n", encoding="utf-8")
+            stdout = io.StringIO()
+
+            with patch("sys.argv", [
+                "folder_report.py", str(root), "--exclude-from", str(first),
+                "--exclude-from", str(second), "--exclude", "*.tmp", "--json",
+            ]), redirect_stdout(stdout):
+                code = main()
+
+            self.assertEqual(code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["files"], 1)
+            self.assertEqual(result["size"], 3)
+            self.assertEqual(result["extensions"], [
+                {"extension": ".txt", "files": 1, "size": 3}
+            ])
+            self.assertEqual(result["largest_files"], [{"path": "keep.txt", "size": 3}])
+
+    def test_parser_accepts_repeated_pattern_files(self) -> None:
+        args = build_parser().parse_args(
+            [".", "--exclude-from", "first.txt", "--exclude-from", "second.txt"]
+        )
+        self.assertEqual(args.exclude_from, [Path("first.txt"), Path("second.txt")])
+
+    def test_empty_pattern_file_preserves_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "patterns.txt"
+            config.write_text("# only comments\n\n", encoding="utf-8")
+            patterns = read_exclude_patterns([config])
+            self.assertEqual(patterns, [])
+            self.assertEqual(scan_folder(root, exclude=patterns), scan_folder(root))
+
+    def test_unreadable_pattern_files_fail_before_scan_or_report_save(self) -> None:
+        for failure in ("missing", "permission", "invalid-utf8"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "patterns.txt"
+                if failure == "invalid-utf8":
+                    config.write_bytes(b"\xff\xfe")
+                output = root / "report.json"
+                original = b"existing report"
+                output.write_bytes(original)
+                original_open = Path.open
+
+                def fake_open(path, *args, **kwargs):
+                    if failure == "permission" and path == config:
+                        raise PermissionError(13, "access denied", str(path))
+                    return original_open(path, *args, **kwargs)
+
+                error = io.StringIO()
+                stdout = io.StringIO()
+                with patch.object(Path, "open", new=fake_open), patch(
+                    "folder_report.scan_folder"
+                ) as scanner, patch("sys.argv", [
+                    "folder_report.py", directory, "--exclude-from", str(config),
+                    "--json-output", str(output), "--force",
+                ]), redirect_stderr(error), redirect_stdout(stdout):
+                    code = main()
+
+                self.assertEqual(code, 2)
+                self.assertIn("--exclude-from", error.getvalue())
+                self.assertIn(str(config), error.getvalue())
+                self.assertEqual(stdout.getvalue(), "")
+                scanner.assert_not_called()
+                self.assertEqual(output.read_bytes(), original)
 
 
 class StrictModeTests(unittest.TestCase):

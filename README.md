@@ -225,6 +225,30 @@ python folder_report.py . --markdown-output report.md --force
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
 ```
 
+`--exclude-from PATH`로 UTF-8 텍스트 파일의 제외 패턴을 읽을 수 있습니다.
+한 줄에 패턴 하나를 작성하며 앞뒤 공백, 빈 줄, `#`으로 시작하는 주석은 무시합니다.
+UTF-8 BOM이 있는 파일도 지원합니다. 줄 중간의 `#`은 패턴의 일부로 취급합니다.
+옵션을 여러 번 지정하거나 `--exclude`와 함께 사용하면 모든 패턴을 합쳐 적용합니다.
+패턴 매칭 규칙은 `--exclude`와 동일합니다. 상대 설정 파일 경로는 실행 중인
+현재 폴더를 기준으로 하며, 설정 파일 자체가 자동으로 분석에서 제외되지는 않습니다.
+파일이 없거나 읽을 수 없거나 UTF-8이 아니면 stderr에 오류를 출력하고 종료 코드 `2`를 반환합니다.
+
+예를 들어 `exclude-patterns.txt`를 다음과 같이 작성합니다.
+
+```text
+# 로그 및 의존성 폴더 제외
+*.log
+node_modules
+
+*.tmp
+```
+
+```powershell
+folder-report . --exclude-from exclude-patterns.txt
+folder-report . --exclude-from exclude-patterns.txt --exclude-from local-patterns.txt --exclude "*.bak"
+python folder_report.py . --exclude-from exclude-patterns.txt --json
+```
+
 ### 테스트
 
 ```powershell
