@@ -673,6 +673,141 @@ class ParseSizeTests(unittest.TestCase):
         self.assertEqual(arguments.max_size, 3 * 1024**2)
 
 
+class FailOverSizeTests(unittest.TestCase):
+    def run_cli(self, root, *arguments):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder_report.py", str(root), *arguments]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_below_equal_and_above_limit_preserve_text_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"12345")
+            for limit, expected_code in ((6, 0), (5, 0), (4, 4), (0, 4)):
+                with self.subTest(limit=limit):
+                    code, stdout, stderr = self.run_cli(root, "--fail-over-size", str(limit))
+                    self.assertEqual(code, expected_code)
+                    self.assertIn("Files: 1", stdout)
+                    if expected_code == 4:
+                        self.assertIn("Total size 5 bytes", stderr)
+                        self.assertIn(f"limit {limit} bytes", stderr)
+                    else:
+                        self.assertEqual(stderr, "")
+
+    def test_empty_folder_at_zero_limit_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            code, stdout, stderr = self.run_cli(Path(directory), "--fail-over-size", "0")
+            self.assertEqual(code, 0)
+            self.assertIn("Files: 0", stdout)
+            self.assertEqual(stderr, "")
+
+    def test_units_reuse_size_parser(self) -> None:
+        for size, expected in (("1kIb", 1024), ("2MiB", 2 * 1024**2),
+                               ("3GIB", 3 * 1024**3)):
+            with self.subTest(size=size):
+                args = build_parser().parse_args(["--fail-over-size", size])
+                self.assertEqual(args.fail_over_size, expected)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.bin").write_bytes(b"x" * 1025)
+            self.assertEqual(self.run_cli(root, "--fail-over-size", "1KiB")[0], 4)
+
+    def test_invalid_sizes_are_rejected(self) -> None:
+        for value in ("-1", "1.5MiB", "2MB", "invalid"):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as context:
+                    build_parser().parse_args(["--fail-over-size", value])
+                self.assertEqual(context.exception.code, 2)
+
+    def test_checks_filtered_total_and_keeps_json_stdout_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            for name, size in (("keep.txt", 5), ("small.txt", 1), ("large.txt", 10),
+                               ("other.bin", 5), ("excluded.txt", 5), ("config-skip.txt", 5)):
+                (root / name).write_bytes(b"x" * size)
+            config = Path(directory) / "patterns.txt"
+            config.write_text("config-skip.txt\n", encoding="utf-8")
+            options = ["--extension", "txt", "--min-size", "2", "--max-size", "6",
+                       "--exclude", "excluded.txt", "--exclude-from", str(config), "--json"]
+            for limit, expected in ((5, 0), (4, 4)):
+                with self.subTest(limit=limit):
+                    code, stdout, stderr = self.run_cli(
+                        root, *options, "--fail-over-size", str(limit)
+                    )
+                    report = json.loads(stdout)
+                    self.assertEqual(code, expected)
+                    self.assertEqual(report["files"], 1)
+                    self.assertEqual(report["size"], 5)
+                    self.assertEqual(bool(stderr), expected == 4)
+
+    def test_report_files_are_saved_even_when_limit_is_exceeded(self) -> None:
+        for option, suffix in (("--csv", "csv"), ("--json-output", "json"),
+                               ("--markdown-output", "md")):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"12345")
+                output = root / f"report.{suffix}"
+                code, stdout, stderr = self.run_cli(
+                    root, option, str(output), "--fail-over-size", "4"
+                )
+                self.assertEqual(code, 4)
+                self.assertIn("saved to:", stdout)
+                self.assertIn("Total size 5 bytes", stderr)
+                text = output.read_text(encoding="utf-8")
+                if suffix == "json":
+                    self.assertEqual(json.loads(text)["size"], 5)
+                elif suffix == "csv":
+                    self.assertEqual(list(csv.DictReader(io.StringIO(text)))[0]["size_bytes"], "5")
+                else:
+                    self.assertIn("(5 bytes)", text)
+
+    def test_strict_errors_take_priority_and_preserve_existing_files(self) -> None:
+        modes = ([], ["--json"], ["--csv", "report.csv"],
+                 ["--json-output", "report.json"], ["--markdown-output", "report.md"])
+        for options in modes:
+            for existing in (False, True):
+                with self.subTest(options=options, existing=existing):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / "data.txt").write_bytes(b"12345")
+                        report = replace(scan_folder(root), skipped=[str(root / "blocked")])
+                        arguments = list(options)
+                        output = None
+                        if len(options) == 2:
+                            output = root / options[1]
+                            arguments[1] = str(output)
+                            if existing:
+                                output.write_bytes(b"existing report")
+                        with patch("folder_report.scan_folder", return_value=report):
+                            code, stdout, stderr = self.run_cli(
+                                root, *arguments, "--strict", "--force", "--fail-over-size", "0"
+                            )
+                        self.assertEqual(code, 3)
+                        self.assertEqual(stdout, "")
+                        self.assertIn("Strict analysis failed", stderr)
+                        self.assertNotIn("exceeds limit", stderr)
+                        if output is not None:
+                            if existing:
+                                self.assertEqual(output.read_bytes(), b"existing report")
+                            else:
+                                self.assertFalse(output.exists())
+
+    def test_save_failure_retains_exit_code_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"123")
+            code, stdout, stderr = self.run_cli(
+                root, "--json-output", str(root / "missing" / "report.json"),
+                "--fail-over-size", "0",
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("Could not save JSON", stderr)
+            self.assertNotIn("exceeds limit", stderr)
+
+
 class ExcludeFromTests(unittest.TestCase):
     def test_reads_utf8_patterns_and_ignores_blanks_and_comments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

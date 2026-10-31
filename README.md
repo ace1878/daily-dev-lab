@@ -249,6 +249,32 @@ folder-report . --exclude-from exclude-patterns.txt --exclude-from local-pattern
 python folder_report.py . --exclude-from exclude-patterns.txt --json
 ```
 
+`--fail-over-size SIZE`를 사용하면 필터 적용 후 전체 분석 용량이 제한값을 초과할 때
+종료 코드 `4`를 반환합니다. 제한값과 정확히 같으면 정상 처리합니다. 정수 바이트와
+`KiB`, `MiB`, `GiB`를 대소문자 구분 없이 사용할 수 있습니다.
+초과하더라도 보고서는 정상적으로 출력하거나 저장하며, 실제 용량과 제한 용량을
+바이트 단위로 stderr에 알립니다. JSON 화면 출력에는 오류 메시지가 섞이지 않습니다.
+`--strict` 접근 오류가 있으면 보고서를 만들지 않고 종료 코드 `3`을 우선 반환합니다.
+파일 저장 실패 등 기존 오류는 종료 코드 `2`를 유지합니다.
+
+```powershell
+folder-report . --fail-over-size 10MiB
+$LASTEXITCODE
+
+# 필터 적용 후 합계 검사 및 JSON 출력
+folder-report . --extension py --exclude "*.log" --fail-over-size 1MiB --json
+
+# 용량을 초과해도 보고서 파일은 저장됨(기존 파일은 --force 필요)
+folder-report . --fail-over-size 1MiB --markdown-output report.md
+```
+
+종료 코드:
+
+- `0`: 정상 처리(용량 제한 미지정 또는 제한값 이하)
+- `2`: 잘못된 입력, 설정 파일 읽기 실패, 보고서 저장 실패 등
+- `3`: `--strict` 사용 중 접근 오류 발생(보고서 생성 안 함)
+- `4`: 보고서 출력·저장 후 용량 제한 초과 확인
+
 ### 테스트
 
 ```powershell

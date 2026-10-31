@@ -379,6 +379,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="include only files at most this size (bytes, KiB, MiB, or GiB)",
     )
     parser.add_argument(
+        "--fail-over-size",
+        type=parse_size,
+        metavar="SIZE",
+        help="return exit code 4 if the filtered total size exceeds this limit",
+    )
+    parser.add_argument(
         "--sort-by",
         choices=("extension", "size", "count"),
         default="extension",
@@ -533,6 +539,13 @@ def main() -> int:
         print(render_json(report))
     else:
         print(render_text(report, show_skipped=args.show_skipped))
+    if args.fail_over_size is not None and report.size > args.fail_over_size:
+        print(
+            f"Error: Total size {report.size} bytes exceeds limit "
+            f"{args.fail_over_size} bytes.",
+            file=sys.stderr,
+        )
+        return 4
     return 0
 
 
