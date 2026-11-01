@@ -283,13 +283,21 @@ python -m unittest discover -s tests -v
 
 ### CI
 
-GitHub Actions가 다음 상황에서 Python 3.12와 Ubuntu 환경으로 전체 테스트를
-자동 실행합니다.
+GitHub Actions가 다음 상황에서 Python 3.12를 사용해 Ubuntu와 Windows 환경에서
+각각 전체 테스트를 자동 실행합니다.
 
 - `main` 브랜치에 push할 때
 - pull request를 만들거나 새로운 변경을 올릴 때
 
 실행 결과는 GitHub 저장소의 **Actions** 탭에서 `Tests` 워크플로를 선택해 확인할
-수 있습니다. 각 실행의 `test` 작업에서 테스트 로그와 성공·실패 원인을 볼 수
-있습니다. 테스트 명령이 실패하면 워크플로도 실패합니다.
+수 있습니다. OS 매트릭스의 `test (ubuntu-latest)`와 `test (windows-latest)` 작업이
+각각 다음 검증을 수행합니다.
+
+1. `python -m pip install -e .`로 editable 설치
+2. `folder-report --help`로 설치된 CLI 진입점 확인
+3. `python -m unittest discover -s tests -v`로 전체 테스트 실행
+
+각 작업의 단계별 로그에서 성공·실패 원인을 확인할 수 있습니다. 설치, CLI 실행,
+테스트 중 어느 단계라도 실패하면 해당 작업과 워크플로가 실패합니다. 한 OS가
+실패하더라도 다른 OS 작업은 취소하지 않아 두 환경의 결과를 확인할 수 있습니다.
 
