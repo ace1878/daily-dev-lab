@@ -38,3 +38,9 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: python -m unittest discover -s tests -v
+
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps --wheel-dir dist
+
+      - name: Verify isolated wheel installation
+        run: python scripts/verify_wheel.py

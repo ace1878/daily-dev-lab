@@ -38,6 +38,25 @@ folder-report . --markdown-output report.md
 설치는 `pyproject.toml`의 setuptools 설정을 사용하며 `build/`, `dist/`, `*.egg-info/`는
 Git 추적에서 제외합니다.
 
+### wheel 빌드 및 독립 설치 검증
+
+저장소 폴더에서 배포용 wheel을 만들고 임시 가상환경에서 검증할 수 있습니다.
+개발용 editable 설치와 별개로 동작합니다.
+
+```powershell
+python -m pip wheel . --no-deps --wheel-dir dist
+python scripts/verify_wheel.py
+```
+
+검증 스크립트는 `dist/daily_dev_lab-*.whl` 파일이 하나일 때 자동으로 선택합니다.
+여러 버전이 있으면 `python scripts/verify_wheel.py dist/파일명.whl`처럼 지정합니다.
+저장소 밖 임시 가상환경에 해당 wheel만 설치하고, 설치된 모듈의 실제 위치,
+`folder-report --help`, 임시 폴더 분석 결과(파일 2개, 8바이트)를 검사합니다.
+Windows의 `Scripts/*.exe`와 Ubuntu의 `bin/*` 경로 차이를 자동 처리합니다.
+검증 후 임시 환경은 삭제되며 빌드한 wheel은 `dist/`에 남습니다.
+검증 스크립트는 표준 라이브러리만 사용하며, wheel 설치 시 외부 인덱스나 의존성을
+다운로드하지 않습니다. 빌드 단계에는 기존 setuptools 빌드 환경이 사용됩니다.
+
 ### 사용법
 
 ```powershell
@@ -296,6 +315,8 @@ GitHub Actions가 다음 상황에서 Python 3.12를 사용해 Ubuntu와 Windows
 1. `python -m pip install -e .`로 editable 설치
 2. `folder-report --help`로 설치된 CLI 진입점 확인
 3. `python -m unittest discover -s tests -v`로 전체 테스트 실행
+4. `python -m pip wheel . --no-deps --wheel-dir dist`로 wheel 빌드
+5. `python scripts/verify_wheel.py`로 저장소 밖 임시 가상환경 설치·실행 검증
 
 각 작업의 단계별 로그에서 성공·실패 원인을 확인할 수 있습니다. 설치, CLI 실행,
 테스트 중 어느 단계라도 실패하면 해당 작업과 워크플로가 실패합니다. 한 OS가
