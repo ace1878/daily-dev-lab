@@ -2,11 +2,14 @@ import argparse
 import csv
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from importlib.metadata import PackageNotFoundError
 from unittest.mock import patch
 
 from folder_report import (
@@ -14,6 +17,7 @@ from folder_report import (
     NO_EXTENSION,
     build_parser,
     format_size,
+    get_version,
     main,
     parse_size,
     read_exclude_patterns,
@@ -25,6 +29,45 @@ from folder_report import (
     write_json,
     write_markdown,
 )
+
+
+class VersionTests(unittest.TestCase):
+    def test_uses_installed_package_metadata(self) -> None:
+        with patch("folder_report.version", return_value="9.8.7") as metadata_version:
+            self.assertEqual(get_version(), "9.8.7")
+        metadata_version.assert_called_once_with("daily-dev-lab")
+
+    def test_uninstalled_source_reads_project_version(self) -> None:
+        with patch("folder_report.version", side_effect=PackageNotFoundError), patch(
+            "pathlib.Path.read_text",
+            return_value='[build-system]\nrequires = []\n[project]\nversion = "8.7.6"\n[tool.example]\nversion = "wrong"\n',
+        ):
+            self.assertEqual(get_version(), "8.7.6")
+
+    def test_uninstalled_source_reads_real_project_file(self) -> None:
+        expected = get_version()
+        with patch("folder_report.version", side_effect=PackageNotFoundError):
+            self.assertEqual(get_version(), expected)
+
+    def test_version_exits_successfully_without_scanning(self) -> None:
+        output = io.StringIO()
+        with patch("sys.argv", ["folder-report", "--version"]), patch(
+            "folder_report.scan_folder"
+        ) as scan, redirect_stdout(output), self.assertRaises(SystemExit) as error:
+            main()
+        self.assertEqual(error.exception.code, 0)
+        self.assertEqual(output.getvalue(), f"folder-report {get_version()}\n")
+        scan.assert_not_called()
+
+    def test_direct_script_version_outside_project(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "folder_report.py"
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(script), "--version"], cwd=directory,
+                capture_output=True, text=True, check=True,
+            )
+        self.assertEqual(result.stdout.strip(), f"folder-report {get_version()}")
+        self.assertEqual(result.stderr, "")
 
 
 class ScanFolderTests(unittest.TestCase):

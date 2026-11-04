@@ -38,6 +38,18 @@ folder-report . --markdown-output report.md
 설치는 `pyproject.toml`의 setuptools 설정을 사용하며 `build/`, `dist/`, `*.egg-info/`는
 Git 추적에서 제외합니다.
 
+`--version`은 폴더를 분석하지 않고 패키지 버전을 출력한 뒤 종료 코드 `0`으로 끝납니다.
+
+```powershell
+folder-report --version
+python folder_report.py --version
+# 출력 예: folder-report 0.1.0
+```
+
+설치된 도구는 `pyproject.toml`에서 생성된 패키지 메타데이터를 사용합니다.
+설치 없이 Python 파일을 직접 실행할 때는 같은 폴더의 `pyproject.toml`에서 버전을
+읽으므로 코드에 버전 문자열을 중복해서 관리하지 않습니다.
+
 ### wheel 빌드 및 독립 설치 검증
 
 저장소 폴더에서 배포용 wheel을 만들고 임시 가상환경에서 검증할 수 있습니다.

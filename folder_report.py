@@ -13,6 +13,7 @@ import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Iterable, TextIO
 
@@ -359,9 +360,33 @@ def write_markdown(report: FolderReport, output: Path, force: bool = False) -> N
         markdown_file.write(render_markdown(report))
 
 
+def get_version() -> str:
+    """Use package metadata, or the source project's static version when uninstalled."""
+    try:
+        return version("daily-dev-lab")
+    except PackageNotFoundError:
+        # Python 3.10 has no tomllib; read only our static [project] version field.
+        project_file = Path(__file__).resolve().with_name("pyproject.toml")
+        project = re.search(
+            r"(?ms)^\[project\]\s*$(.*?)(?=^\[|\Z)",
+            project_file.read_text(encoding="utf-8"),
+        )
+        match = re.search(
+            r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]\s*(?:#.*)?$",
+            project.group(1) if project else "",
+        )
+        if match is None:
+            raise ValueError(f"Could not read package version from {project_file}")
+        return match.group(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Summarize file counts and sizes in a folder."
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"folder-report {get_version()}",
+        help="show the package version and exit",
     )
     parser.add_argument("path", nargs="?", default=".", help="folder to scan (default: current folder)")
     parser.add_argument("--top", type=int, default=5, help="number of largest files to show")
