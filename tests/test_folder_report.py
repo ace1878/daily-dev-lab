@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from folder_report import (
     FileEntry,
+    ExtensionSummary,
+    FolderReport,
     NO_EXTENSION,
     build_parser,
     format_size,
@@ -672,10 +674,71 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn(f"  {blocked}", output.getvalue())
 
 
+class TextOutputTests(unittest.TestCase):
+    def test_readable_sizes_and_aligned_columns(self) -> None:
+        report = FolderReport(
+            "sample", 3, 1573379,
+            [ExtensionSummary(".bin", 1, 1572864), ExtensionSummary(".txt", 2, 515)],
+            [FileEntry("archive.bin", 1572864), FileEntry("notes.txt", 512), FileEntry("tiny.txt", 3)],
+            [],
+        )
+        self.assertEqual(render_text(report), "\n".join([
+            "Folder: sample", "Files: 3", "Total size: 1.5 MiB", "",
+            "By extension:", "  Extension  Files     Size", "  ---------  -----  -------",
+            "  .bin           1  1.5 MiB", "  .txt           2    515 B", "",
+            "Largest files:", "     Size  Path", "  -------  -----------",
+            "  1.5 MiB  archive.bin", "    512 B  notes.txt", "      3 B  tiny.txt",
+        ]))
+
+    def test_long_extensions_and_large_counts_fit_columns(self) -> None:
+        report = FolderReport(
+            "sample", 123456, 1024**3,
+            [ExtensionSummary(".verylongextension", 123456, 1024**3)],
+            [FileEntry("nested/file.verylongextension", 1024**3)], [],
+        )
+        lines = render_text(report).splitlines()
+        header = lines[5]
+        row = lines[7]
+        self.assertEqual(header.index("Files") + len("Files"), row.index("123456") + 6)
+        self.assertEqual(header.index("Size") + len("Size"), len(row))
+        self.assertIn(".verylongextension", row)
+        self.assertIn("1.0 GiB", row)
+        self.assertTrue(lines[-1].endswith("nested/file.verylongextension"))
+
+    def test_size_filter_and_tied_file_order_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "skip.txt").write_bytes(b"x")
+            for name in ("z.txt", "a.txt"):
+                (root / name).write_bytes(b"x" * 1024)
+            args = build_parser().parse_args(["--min-size", "1KiB", "--max-size", "1kIb"])
+            report = scan_folder(root, min_size=args.min_size, max_size=args.max_size)
+        output = render_text(report)
+        self.assertEqual(report.files, 2)
+        self.assertIn("Total size: 2.0 KiB", output)
+        self.assertLess(output.index("a.txt"), output.index("z.txt"))
+        self.assertNotIn("skip.txt", output)
+
+    def test_empty_report_omits_table_headers(self) -> None:
+        output = render_text(FolderReport("empty", 0, 0, [], [], []))
+        self.assertIn("Total size: 0 B", output)
+        self.assertEqual(output.count("  (no files)"), 2)
+        self.assertNotIn("Extension  Files", output)
+        self.assertNotIn("Path", output)
+
+
 class FormatSizeTests(unittest.TestCase):
     def test_formats_binary_units(self) -> None:
         self.assertEqual(format_size(999), "999 B")
         self.assertEqual(format_size(1536), "1.5 KiB")
+
+    def test_zero_and_binary_unit_boundaries(self) -> None:
+        for size, expected in (
+            (0, "0 B"), (1023, "1023 B"), (1024, "1.0 KiB"),
+            (1024**2, "1.0 MiB"), (1024**3, "1.0 GiB"), (1024**4, "1.0 TiB"),
+        ):
+            with self.subTest(size=size):
+                self.assertEqual(format_size(size), expected)
 
 
 class ParseSizeTests(unittest.TestCase):

@@ -89,6 +89,31 @@ python folder_report.py . --show-skipped
 python folder_report.py . --strict
 ```
 
+기본 터미널 출력은 크기를 B·KiB·MiB·GiB·TiB로 자동 표시하며, 내용 길이에 맞춰
+열을 정렬합니다. 큰 파일은 크기 내림차순이며 같은 크기는 경로 오름차순입니다.
+
+```text
+Folder: sample
+Files: 3
+Total size: 1.5 MiB
+
+By extension:
+  Extension  Files     Size
+  ---------  -----  -------
+  .bin           1  1.5 MiB
+  .txt           2    515 B
+
+Largest files:
+     Size  Path
+  -------  -----------
+  1.5 MiB  archive.bin
+    512 B  notes.txt
+      3 B  tiny.txt
+```
+
+빈 폴더는 기존처럼 `(no files)`로 표시합니다. 이 표 정렬은 터미널 텍스트 출력에만
+적용되며 JSON·CSV·Markdown 형식과 크기 필터 옵션은 기존과 동일합니다.
+
 `--strict`를 사용하면 분석 중 접근 오류로 건너뛴 경로가 하나라도 있을 때
 오류 메시지를 stderr에 출력하고 종료 코드 `3`을 반환합니다. 이 경우 화면 보고서와
 CSV·JSON·Markdown 파일을 출력하지 않으며, `--force`를 함께 지정해도 기존 출력

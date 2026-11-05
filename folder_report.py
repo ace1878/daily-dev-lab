@@ -261,15 +261,34 @@ def render_text(report: FolderReport, show_skipped: bool = False) -> str:
     ]
 
     if report.extensions:
-        for item in report.extensions:
-            lines.append(f"  {item.extension:<15} {item.files:>5} files  {format_size(item.size):>10}")
+        rows = [
+            (item.extension, str(item.files), format_size(item.size))
+            for item in report.extensions
+        ]
+        extension_width = max(len("Extension"), max(len(row[0]) for row in rows))
+        count_width = max(len("Files"), max(len(row[1]) for row in rows))
+        size_width = max(len("Size"), max(len(row[2]) for row in rows))
+        lines.extend([
+            f"  {'Extension':<{extension_width}}  {'Files':>{count_width}}  {'Size':>{size_width}}",
+            f"  {'-' * extension_width}  {'-' * count_width}  {'-' * size_width}",
+        ])
+        lines.extend(
+            f"  {extension:<{extension_width}}  {count:>{count_width}}  {size:>{size_width}}"
+            for extension, count, size in rows
+        )
     else:
         lines.append("  (no files)")
 
     lines.extend(["", "Largest files:"])
     if report.largest_files:
-        for item in report.largest_files:
-            lines.append(f"  {format_size(item.size):>10}  {item.path}")
+        file_rows = [(format_size(item.size), item.path) for item in report.largest_files]
+        size_width = max(len("Size"), max(len(row[0]) for row in file_rows))
+        path_width = max(len("Path"), max(len(row[1]) for row in file_rows))
+        lines.extend([
+            f"  {'Size':>{size_width}}  Path",
+            f"  {'-' * size_width}  {'-' * path_width}",
+        ])
+        lines.extend(f"  {size:>{size_width}}  {path}" for size, path in file_rows)
     else:
         lines.append("  (no files)")
 
