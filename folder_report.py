@@ -10,6 +10,7 @@ import os
 import re
 import string
 import sys
+import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
@@ -495,6 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="list paths skipped because of access errors",
     )
     parser.add_argument(
+        "--show-time",
+        action="store_true",
+        help="print analysis duration in seconds to stderr after reporting",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="allow overwriting an existing CSV, JSON, or Markdown output file",
@@ -528,6 +534,7 @@ def main() -> int:
         except ValueError:
             pass
 
+    started = time.perf_counter() if args.show_time else None
     try:
         report = scan_folder(
             scan_root,
@@ -543,6 +550,7 @@ def main() -> int:
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}")
         return 2
+    elapsed = time.perf_counter() - started if started is not None else None
 
     if args.strict and report.skipped:
         print(
@@ -583,6 +591,8 @@ def main() -> int:
         print(render_json(report))
     else:
         print(render_text(report, show_skipped=args.show_skipped))
+    if elapsed is not None:
+        print(f"Analysis time: {elapsed:.3f} seconds", file=sys.stderr)
     if args.fail_over_size is not None and report.size > args.fail_over_size:
         print(
             f"Error: Total size {report.size} bytes exceeds limit "

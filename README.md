@@ -89,6 +89,24 @@ python folder_report.py . --show-skipped
 python folder_report.py . --strict
 ```
 
+`--show-time`을 사용하면 보고서 출력·저장 후 분석 소요 시간을 초 단위(소수점 셋째
+자리)로 표시합니다. `time.perf_counter()`로 폴더 분석 구간만 측정하며, 출력·저장에
+걸린 시간은 포함하지 않습니다. 시간 메시지는 stderr로 출력하므로 JSON 화면 출력과
+CSV·JSON·Markdown 파일 내용에 섞이지 않습니다. 옵션 생략 시 기존 출력이 유지됩니다.
+
+```powershell
+folder-report . --show-time
+python folder_report.py . --max-depth 1 --show-time
+python folder_report.py . --json --show-time
+python folder_report.py . --json-output report.json --show-time
+```
+
+시간 메시지 예시: `Analysis time: 0.012 seconds`
+
+분석 실패, `--strict` 접근 오류 또는 보고서 저장 실패 시에는 시간 메시지를 출력하지
+않습니다. `--fail-over-size`로 용량을 초과한 경우는 보고서와 시간을 출력하고 기존처럼
+종료 코드 `4`를 반환합니다.
+
 기본 터미널 출력은 크기를 B·KiB·MiB·GiB·TiB로 자동 표시하며, 내용 길이에 맞춰
 열을 정렬합니다. 큰 파일은 크기 내림차순이며 같은 크기는 경로 오름차순입니다.
 

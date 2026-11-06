@@ -674,6 +674,125 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn(f"  {blocked}", output.getvalue())
 
 
+class ShowTimeTests(unittest.TestCase):
+    def run_cli(self, root, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder-report", str(root), *options]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_reports_scan_duration_after_text_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"abc")
+            events = []
+            original_render = render_text
+
+            def clock():
+                events.append("clock")
+                return 10.0 if len(events) == 1 else 10.125
+
+            def render(report, **kwargs):
+                events.append("render")
+                return original_render(report, **kwargs)
+
+            with patch("folder_report.time.perf_counter", side_effect=clock), patch(
+                "folder_report.render_text", side_effect=render
+            ):
+                code, stdout, stderr = self.run_cli(root, "--show-time")
+            self.assertEqual(code, 0)
+            self.assertIn("Files: 1", stdout)
+            self.assertNotIn("Analysis time", stdout)
+            self.assertEqual(stderr, "Analysis time: 0.125 seconds\n")
+            self.assertEqual(events, ["clock", "clock", "render"])
+
+    def test_omitted_option_preserves_output_and_does_not_measure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = render_text(scan_folder(root)) + "\n"
+            with patch("folder_report.time.perf_counter") as clock:
+                code, stdout, stderr = self.run_cli(root)
+            self.assertEqual((code, stdout, stderr), (0, expected, ""))
+            clock.assert_not_called()
+
+    def test_empty_folder_can_report_zero_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "folder_report.time.perf_counter", side_effect=[5.0, 5.0]
+        ):
+            code, stdout, stderr = self.run_cli(directory, "--show-time")
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.count("(no files)"), 2)
+        self.assertEqual(stderr, "Analysis time: 0.000 seconds\n")
+
+    def test_json_stdout_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"abc")
+            baseline = self.run_cli(root, "--json")
+            with patch("folder_report.time.perf_counter", side_effect=[0.0, 0.25]):
+                code, stdout, stderr = self.run_cli(root, "--json", "--show-time")
+            self.assertEqual(code, 0)
+            self.assertEqual(stdout, baseline[1])
+            self.assertEqual(json.loads(stdout)["files"], 1)
+            self.assertEqual(stderr, "Analysis time: 0.250 seconds\n")
+
+    def test_saved_reports_and_confirmation_are_unchanged(self) -> None:
+        for option, suffix in (("--csv", "csv"), ("--json-output", "json"),
+                               ("--markdown-output", "md")):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"abc")
+                output = root / f"report.{suffix}"
+                baseline = self.run_cli(root, option, str(output))
+                expected = output.read_bytes()
+                with patch("folder_report.time.perf_counter", side_effect=[0.0, 0.25]):
+                    code, stdout, stderr = self.run_cli(
+                        root, option, str(output), "--force", "--show-time"
+                    )
+                self.assertEqual(code, 0)
+                self.assertEqual(stdout, baseline[1])
+                self.assertEqual(output.read_bytes(), expected)
+                self.assertEqual(stderr, "Analysis time: 0.250 seconds\n")
+
+    def test_strict_failure_preserves_output_file_and_exit_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            output.write_bytes(b"existing report")
+            report = replace(scan_folder(root), skipped=["blocked"])
+            with patch("folder_report.scan_folder", return_value=report), patch(
+                "folder_report.time.perf_counter", side_effect=[0.0, 0.25]
+            ):
+                code, stdout, stderr = self.run_cli(
+                    root, "--strict", "--json-output", str(output), "--force", "--show-time"
+                )
+            self.assertEqual(code, 3)
+            self.assertEqual(stdout, "")
+            self.assertIn("Strict analysis failed", stderr)
+            self.assertNotIn("Analysis time", stderr)
+            self.assertEqual(output.read_bytes(), b"existing report")
+
+    def test_save_failure_does_not_print_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "missing" / "report.json"
+            code, stdout, stderr = self.run_cli(directory, "--json-output", str(output), "--show-time")
+            self.assertEqual(code, 2)
+            self.assertIn("Could not save JSON", stderr)
+            self.assertNotIn("Analysis time", stderr)
+            self.assertFalse(output.exists())
+
+    def test_size_limit_still_returns_four_after_report_and_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"abc")
+            code, stdout, stderr = self.run_cli(root, "--json", "--fail-over-size", "0", "--show-time")
+            self.assertEqual(code, 4)
+            self.assertEqual(json.loads(stdout)["size"], 3)
+            self.assertIn("Analysis time:", stderr)
+            self.assertIn("exceeds limit", stderr)
+
+
 class TextOutputTests(unittest.TestCase):
     def test_readable_sizes_and_aligned_columns(self) -> None:
         report = FolderReport(
