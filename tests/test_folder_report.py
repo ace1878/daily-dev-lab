@@ -674,6 +674,129 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn(f"  {blocked}", output.getvalue())
 
 
+class QuietTests(unittest.TestCase):
+    def run_cli(self, root, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder-report", str(root), *options]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_quiet_runs_analysis_without_terminal_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"abc")
+            with patch("folder_report.scan_folder", wraps=scan_folder) as scan:
+                result = self.run_cli(root, "--quiet")
+            self.assertEqual(result, (0, "", ""))
+            scan.assert_called_once()
+            self.assertEqual(scan.call_args.args[0], root.resolve())
+
+    def test_quiet_limit_below_equal_and_above_filtered_total(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.txt").write_bytes(b"abc")
+            (root / "skip.bin").write_bytes(b"x" * 10)
+            for limit, expected in ((4, 0), (3, 0), (2, 4)):
+                with self.subTest(limit=limit):
+                    code, stdout, stderr = self.run_cli(
+                        root, "--quiet", "--extension", "txt", "--fail-over-size", str(limit)
+                    )
+                    self.assertEqual(code, expected)
+                    self.assertEqual(stdout, "")
+                    if expected == 4:
+                        self.assertIn("Total size 3 bytes exceeds limit 2 bytes", stderr)
+                    else:
+                        self.assertEqual(stderr, "")
+
+    def test_quiet_suppresses_timing_and_json_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "folder_report.time.perf_counter"
+        ) as clock:
+            self.assertEqual(self.run_cli(directory, "--quiet", "--json", "--show-time"), (0, "", ""))
+            clock.assert_not_called()
+
+    def test_quiet_saves_identical_reports_without_confirmations(self) -> None:
+        for option, suffix in (("--csv", "csv"), ("--json-output", "json"),
+                               ("--markdown-output", "md")):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"abc")
+                output = root / f"report.{suffix}"
+                baseline = self.run_cli(root, option, str(output))
+                self.assertEqual(baseline[0], 0)
+                self.assertIn("saved to:", baseline[1])
+                expected = output.read_bytes()
+                output.unlink()
+                result = self.run_cli(root, "--quiet", "--show-time", option, str(output))
+                self.assertEqual(result, (0, "", ""))
+                self.assertEqual(output.read_bytes(), expected)
+
+    def test_quiet_reports_saved_before_size_failure(self) -> None:
+        for option, suffix in (("--csv", "csv"), ("--json-output", "json"),
+                               ("--markdown-output", "md")):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "data.txt").write_bytes(b"abc")
+                output = root / f"report.{suffix}"
+                code, stdout, stderr = self.run_cli(
+                    root, "--quiet", option, str(output), "--fail-over-size", "2"
+                )
+                self.assertEqual(code, 4)
+                self.assertEqual(stdout, "")
+                self.assertIn("exceeds limit", stderr)
+                self.assertTrue(output.is_file())
+
+    def test_quiet_scan_errors_use_stderr_and_keep_exit_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for options in ((str(root / "missing"),), (str(root), "--min-size", "4", "--max-size", "2")):
+                with self.subTest(options=options):
+                    code, stdout, stderr = self.run_cli(options[0], *options[1:], "--quiet")
+                    self.assertEqual(code, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("Error:", stderr)
+            code, stdout, stderr = self.run_cli(root / "missing")
+            self.assertEqual(code, 2)
+            self.assertIn("Error:", stdout)
+            self.assertEqual(stderr, "")
+
+    def test_quiet_save_error_preserves_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            output.write_bytes(b"keep")
+            code, stdout, stderr = self.run_cli(root, "--quiet", "--json-output", str(output))
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout, "")
+            self.assertIn("already exists", stderr)
+            self.assertEqual(output.read_bytes(), b"keep")
+
+    def test_quiet_strict_error_retains_priority_and_preserves_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            output.write_bytes(b"keep")
+            report = replace(scan_folder(root), skipped=["blocked"])
+            with patch("folder_report.scan_folder", return_value=report):
+                code, stdout, stderr = self.run_cli(
+                    root, "--quiet", "--strict", "--show-time", "--fail-over-size", "0",
+                    "--json-output", str(output), "--force"
+                )
+            self.assertEqual(code, 3)
+            self.assertEqual(stdout, "")
+            self.assertIn("Strict analysis failed", stderr)
+            self.assertNotIn("Analysis time", stderr)
+            self.assertNotIn("exceeds limit", stderr)
+            self.assertEqual(output.read_bytes(), b"keep")
+
+    def test_without_quiet_text_output_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data.txt").write_bytes(b"abc")
+            self.assertEqual(self.run_cli(root), (0, render_text(scan_folder(root)) + "\n", ""))
+
+
 class ShowTimeTests(unittest.TestCase):
     def run_cli(self, root, *options):
         stdout, stderr = io.StringIO(), io.StringIO()

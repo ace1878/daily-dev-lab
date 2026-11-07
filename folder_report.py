@@ -501,6 +501,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="print analysis duration in seconds to stderr after reporting",
     )
     parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress normal terminal output and timing, but still save reports and show errors",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="allow overwriting an existing CSV, JSON, or Markdown output file",
@@ -534,7 +539,7 @@ def main() -> int:
         except ValueError:
             pass
 
-    started = time.perf_counter() if args.show_time else None
+    started = time.perf_counter() if args.show_time and not args.quiet else None
     try:
         report = scan_folder(
             scan_root,
@@ -548,7 +553,7 @@ def main() -> int:
             sort_by=args.sort_by,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
-        print(f"Error: {error}")
+        print(f"Error: {error}", file=sys.stderr if args.quiet else sys.stdout)
         return 2
     elapsed = time.perf_counter() - started if started is not None else None
 
@@ -566,7 +571,8 @@ def main() -> int:
         except OSError as error:
             print(f"Error: Could not save CSV to {csv_output}: {error}", file=sys.stderr)
             return 2
-        print(f"CSV saved to: {csv_output}")
+        if not args.quiet:
+            print(f"CSV saved to: {csv_output}")
     elif json_output:
         try:
             write_json(report, json_output, force=args.force)
@@ -576,7 +582,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        print(f"JSON saved to: {json_output}")
+        if not args.quiet:
+            print(f"JSON saved to: {json_output}")
     elif markdown_output:
         try:
             write_markdown(report, markdown_output, force=args.force)
@@ -586,10 +593,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-        print(f"Markdown saved to: {markdown_output}")
-    elif args.json:
+        if not args.quiet:
+            print(f"Markdown saved to: {markdown_output}")
+    elif args.json and not args.quiet:
         print(render_json(report))
-    else:
+    elif not args.quiet:
         print(render_text(report, show_skipped=args.show_skipped))
     if elapsed is not None:
         print(f"Analysis time: {elapsed:.3f} seconds", file=sys.stderr)

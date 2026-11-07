@@ -89,6 +89,29 @@ python folder_report.py . --show-skipped
 python folder_report.py . --strict
 ```
 
+`--quiet`은 실제 분석을 수행하면서 터미널의 일반 출력만 생략합니다. 텍스트·JSON
+화면 보고서, 파일 저장 완료 안내, `--show-time` 시간 메시지를 표시하지 않습니다.
+명시적으로 지정한 CSV·JSON·Markdown 파일은 같은 형식과 내용으로 생성합니다.
+오류 메시지는 stderr에 표시하며, 정상 `0`, 입력·저장 오류 `2`, strict 접근 오류 `3`,
+용량 제한 초과 `4`의 종료 코드는 유지합니다. `--quiet`을 생략하면 기존 동작을 유지합니다.
+
+```powershell
+# 화면 보고서 없이 분석
+folder-report . --quiet
+
+# 필터 적용 후 합계가 10MiB를 초과하면 오류 메시지와 종료 코드 4
+python folder_report.py . --quiet --extension py --fail-over-size 10MiB
+$LASTEXITCODE
+
+# 안내·시간 메시지 없이 JSON 파일 생성
+python folder_report.py . --quiet --show-time --json-output report.json
+```
+
+`--quiet --json`은 JSON 화면 출력도 생략합니다. 파일이 필요하면 `--json-output PATH`를
+사용하세요. 용량 제한을 초과해도 지정한 보고서 파일은 저장되지만, `--strict` 접근 오류가
+있으면 기존처럼 파일을 저장하지 않고 종료 코드 `3`을 반환합니다. `--help`와 `--version`의
+명시적인 정보 요청은 `--quiet`으로 숨기지 않습니다.
+
 `--show-time`을 사용하면 보고서 출력·저장 후 분석 소요 시간을 초 단위(소수점 셋째
 자리)로 표시합니다. `time.perf_counter()`로 폴더 분석 구간만 측정하며, 출력·저장에
 걸린 시간은 포함하지 않습니다. 시간 메시지는 stderr로 출력하므로 JSON 화면 출력과
