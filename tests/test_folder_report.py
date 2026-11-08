@@ -2,6 +2,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -672,6 +673,110 @@ class ScanFolderTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertIn(f"  {blocked}", output.getvalue())
+
+
+class ExcludeDirectoryTests(unittest.TestCase):
+    def test_single_directory_is_removed_from_all_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.txt").write_bytes(b"abc")
+            (root / "cache").mkdir()
+            (root / "cache" / "large.bin").write_bytes(b"x" * 10)
+            before = scan_folder(root)
+            after = scan_folder(root, exclude_dirs=["cache"])
+            self.assertEqual((before.files, before.size), (2, 13))
+            self.assertEqual((after.files, after.size), (1, 3))
+            self.assertEqual(after.extensions, [ExtensionSummary(".txt", 1, 3)])
+            self.assertEqual(after.largest_files, [FileEntry("keep.txt", 3)])
+
+    def test_multiple_and_nested_matching_directories_are_not_walked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in ("cache", "vendor", "nested/cache", "nested/keep"):
+                folder = root / relative
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "data.txt").write_bytes(b"abc")
+            visited = []
+            original_walk = os.walk
+
+            def walk(*args, **kwargs):
+                for entry in original_walk(*args, **kwargs):
+                    visited.append(Path(entry[0]).relative_to(root).as_posix())
+                    yield entry
+
+            with patch("folder_report.os.walk", side_effect=walk):
+                report = scan_folder(root, exclude_dirs=["cache", "vendor"])
+            self.assertEqual((report.files, report.size), (1, 3))
+            self.assertEqual(set(visited), {".", "nested", "nested/keep"})
+
+    def test_same_named_files_remain_and_matching_is_case_sensitive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cache").write_bytes(b"abc")
+            (root / "nested").mkdir()
+            (root / "nested" / "cache").mkdir()
+            (root / "nested" / "cache" / "data.bin").write_bytes(b"12345")
+            report = scan_folder(root, exclude_dirs=["cache"])
+            self.assertEqual((report.files, report.size), (1, 3))
+            self.assertEqual(report.largest_files, [FileEntry("cache", 3)])
+            self.assertEqual(scan_folder(root, exclude_dirs=["CACHE"]), scan_folder(root))
+
+    def test_missing_names_patterns_and_paths_do_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "nested" / "cache"
+            folder.mkdir(parents=True)
+            (folder / "data.txt").write_bytes(b"abc")
+            baseline = scan_folder(root)
+            for name in ("missing", "ca*", "nested/cache"):
+                with self.subTest(name=name):
+                    self.assertEqual(scan_folder(root, exclude_dirs=[name]), baseline)
+
+    def test_repeatable_parser_option_and_default(self) -> None:
+        self.assertEqual(build_parser().parse_args([]).exclude_dir, [])
+        args = build_parser().parse_args(["--exclude-dir", "cache", "--exclude-dir", "vendor"])
+        self.assertEqual(args.exclude_dir, ["cache", "vendor"])
+
+    def test_combines_with_hidden_depth_size_and_pattern_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in (".git", ".venv"):
+                (root / name).mkdir()
+                (root / name / "data.txt").write_bytes(b"abc")
+            (root / "keep.txt").write_bytes(b"abc")
+            (root / "skip.log").write_bytes(b"abc")
+            report = scan_folder(
+                root, include_hidden=True, exclude_dirs=[".git", ".venv"],
+                exclude=["*.log"], min_size=3, max_size=3, max_depth=1,
+            )
+            self.assertEqual((report.files, report.size), (1, 3))
+            self.assertEqual(report.largest_files, [FileEntry("keep.txt", 3)])
+
+    def test_cli_json_csv_markdown_preserve_existing_formats(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "keep.txt").write_bytes(b"abc")
+            (root / "cache").mkdir()
+            (root / "cache" / "skip.bin").write_bytes(b"12345")
+            expected = scan_folder(root, exclude_dirs=["cache"])
+            for option, suffix in (("--json", None), ("--csv", "csv"),
+                                   ("--json-output", "json"), ("--markdown-output", "md")):
+                with self.subTest(option=option):
+                    output = Path(directory) / f"report.{suffix}"
+                    arguments = ["folder-report", str(root), "--exclude-dir", "cache", option]
+                    if suffix:
+                        arguments.append(str(output))
+                    stdout = io.StringIO()
+                    with patch("sys.argv", arguments), redirect_stdout(stdout):
+                        self.assertEqual(main(), 0)
+                    if option == "--json":
+                        self.assertEqual(stdout.getvalue(), render_json(expected) + "\n")
+                    else:
+                        reference = Path(directory) / f"reference.{suffix}"
+                        writer = {"csv": write_csv, "json": write_json, "md": write_markdown}[suffix]
+                        writer(expected, reference)
+                        self.assertEqual(output.read_bytes(), reference.read_bytes())
 
 
 class QuietTests(unittest.TestCase):

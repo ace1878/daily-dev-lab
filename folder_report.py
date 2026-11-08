@@ -133,6 +133,7 @@ def scan_folder(
     sort_by: str = "extension",
     extensions: Iterable[str] = (),
     max_depth: int | None = None,
+    exclude_dirs: Iterable[str] = (),
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -153,6 +154,7 @@ def scan_folder(
     if sort_by not in {"extension", "size", "count"}:
         raise ValueError("--sort-by must be one of: extension, size, count")
     exclude_patterns = tuple(exclude)
+    excluded_directory_names = set(exclude_dirs)
     included_extensions = _normalize_extensions(extensions)
 
     grouped: dict[str, list[int]] = defaultdict(lambda: [0, 0])
@@ -173,7 +175,8 @@ def scan_folder(
             directories[:] = [
                 name
                 for name in directories
-                if not (current_path / name).is_symlink()
+                if name not in excluded_directory_names
+                and not (current_path / name).is_symlink()
                 and (
                     include_hidden
                     or (not name.startswith(".") and name != "__pycache__")
@@ -470,6 +473,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="exclude a file pattern or directory name (repeatable)",
     )
     parser.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="exclude directories with this exact case-sensitive name (repeatable; no patterns)",
+    )
+    parser.add_argument(
         "--extension",
         action="append",
         default=[],
@@ -546,6 +556,7 @@ def main() -> int:
             top=args.top,
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
+            exclude_dirs=args.exclude_dir,
             extensions=args.extension,
             max_depth=args.max_depth,
             min_size=args.min_size,

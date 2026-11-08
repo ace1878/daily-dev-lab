@@ -322,6 +322,24 @@ python folder_report.py . --markdown-output report.md --force
 python folder_report.py . --exclude "*.log" --exclude "node_modules"
 ```
 
+`--exclude-dir NAME`은 **디렉터리만** 이름의 정확한 일치로 제외합니다. 대소문자를
+구분하며 여러 번 지정할 수 있습니다. 모든 깊이에서 같은 이름의 디렉터리 내부를
+탐색하지 않고, 그 안의 파일은 모든 통계에서 제외합니다. 같은 이름의 파일은 유지합니다.
+경로나 와일드카드 패턴은 해석하지 않으며, 일치하는 이름이 없으면 결과가 바뀌지 않습니다.
+기존 `--exclude`와 `--exclude-from`의 패턴 규칙은 그대로 유지되며 함께 사용할 수 있습니다.
+
+```powershell
+folder-report . --exclude-dir node_modules
+folder-report . --exclude-dir node_modules --exclude-dir vendor
+python folder_report.py . --exclude-dir cache --exclude "*.log" --json
+
+# 숨김 폴더는 기본 제외되므로 포함 모드에서 디렉터리 제외 규칙 검수
+folder-report . --include-hidden --exclude-dir .git --exclude-dir .venv
+```
+
+옵션을 생략하면 기존 탐색 결과가 유지됩니다. 분석 대상으로 직접 지정한 기준 폴더
+자체는 제외하지 않고, 그 아래에서 탐색하는 디렉터리에 규칙을 적용합니다.
+
 `--exclude-from PATH`로 UTF-8 텍스트 파일의 제외 패턴을 읽을 수 있습니다.
 한 줄에 패턴 하나를 작성하며 앞뒤 공백, 빈 줄, `#`으로 시작하는 주석은 무시합니다.
 UTF-8 BOM이 있는 파일도 지원합니다. 줄 중간의 `#`은 패턴의 일부로 취급합니다.
