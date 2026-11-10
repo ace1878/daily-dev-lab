@@ -24,6 +24,7 @@ from folder_report import (
     main,
     parse_size,
     read_exclude_patterns,
+    read_exclude_directories,
     render_json,
     render_markdown,
     render_text,
@@ -673,6 +674,114 @@ class ScanFolderTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertIn(f"  {blocked}", output.getvalue())
+
+
+class ExcludeFileTests(unittest.TestCase):
+    def run_cli(self, root, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder-report", str(root), *options]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_reads_utf8_names_comments_blanks_and_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "names.txt"
+            config.write_text("\ufeff# comment\n\n  # indented\n cache \ncache\n한글\nname#tag\n", encoding="utf-8")
+            self.assertEqual(read_exclude_directories(config), {"cache", "한글", "name#tag"})
+
+    def test_cli_combines_all_existing_exclusion_options(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            for relative in ("cache", "nested/cache", "vendor", "from-patterns"):
+                folder = root / relative
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "skip.bin").write_bytes(b"12345")
+            (root / "nested" / "keep.txt").write_bytes(b"abc")
+            (root / "keep.txt").write_bytes(b"abc")
+            (root / "skip.log").write_bytes(b"12345")
+            config = Path(directory) / "names.txt"
+            config.write_text("cache\ncache\n", encoding="utf-8")
+            patterns = Path(directory) / "patterns.txt"
+            patterns.write_text("from-patterns\n", encoding="utf-8")
+            code, stdout, stderr = self.run_cli(
+                root, "--exclude-file", str(config), "--exclude-dir", "vendor",
+                "--exclude-dir", "cache", "--exclude", "*.log",
+                "--exclude-from", str(patterns), "--json",
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            report = json.loads(stdout)
+            self.assertEqual((report["files"], report["size"]), (2, 6))
+            self.assertEqual(report["extensions"], [{"extension": ".txt", "files": 2, "size": 6}])
+            self.assertEqual(len(report["largest_files"]), 2)
+
+    def test_literal_case_sensitive_directory_only_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "cache").write_bytes(b"abc")
+            folder = root / "nested" / "cache"
+            folder.mkdir(parents=True)
+            (folder / "data.txt").write_bytes(b"12345")
+            config = Path(directory) / "names.txt"
+            for name, expected in (("cache", 1), ("CACHE", 2), ("ca*", 2), ("nested/cache", 2)):
+                with self.subTest(name=name):
+                    config.write_text(name + "\n", encoding="utf-8")
+                    code, stdout, stderr = self.run_cli(root, "--exclude-file", str(config), "--json")
+                    self.assertEqual(code, 0)
+                    self.assertEqual(stderr, "")
+                    self.assertEqual(json.loads(stdout)["files"], expected)
+
+    def test_empty_or_comment_only_list_preserves_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "data.txt").write_bytes(b"abc")
+            config = Path(directory) / "names.txt"
+            baseline = self.run_cli(root, "--json")
+            for contents in ("", "\n# comment\n \n"):
+                with self.subTest(contents=contents):
+                    config.write_text(contents, encoding="utf-8")
+                    self.assertEqual(self.run_cli(root, "--exclude-file", str(config), "--json"), baseline)
+
+    def test_file_errors_stop_before_analysis_and_preserve_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = root / "missing.txt"
+            invalid = root / "invalid.txt"
+            invalid.write_bytes(b"\xff")
+            for config in (missing, invalid, root):
+                for option, suffix in (("--csv", "csv"), ("--json-output", "json"), ("--markdown-output", "md")):
+                    with self.subTest(config=config, option=option):
+                        output = root / f"report.{suffix}"
+                        output.write_bytes(b"keep")
+                        with patch("folder_report.scan_folder") as scan:
+                            code, stdout, stderr = self.run_cli(
+                                root, "--exclude-file", str(config), option, str(output), "--force", "--quiet"
+                            )
+                        self.assertEqual((code, stdout), (2, ""))
+                        self.assertIn("--exclude-file: Could not read", stderr)
+                        self.assertIn(str(config), stderr)
+                        self.assertEqual(output.read_bytes(), b"keep")
+                        scan.assert_not_called()
+            output = root / "new.json"
+            code, _, _ = self.run_cli(root, "--exclude-file", str(missing), "--json-output", str(output))
+            self.assertEqual(code, 2)
+            self.assertFalse(output.exists())
+
+    def test_unreadable_file_reports_permission_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "names.txt"
+            with patch("pathlib.Path.open", side_effect=PermissionError("access denied")), patch(
+                "folder_report.scan_folder"
+            ) as scan:
+                code, stdout, stderr = self.run_cli(directory, "--exclude-file", str(config))
+            self.assertEqual((code, stdout), (2, ""))
+            self.assertIn("access denied", stderr)
+            self.assertIn(str(config), stderr)
+            scan.assert_not_called()
 
 
 class ExcludeDirectoryTests(unittest.TestCase):

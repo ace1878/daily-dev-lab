@@ -340,6 +340,32 @@ folder-report . --include-hidden --exclude-dir .git --exclude-dir .venv
 옵션을 생략하면 기존 탐색 결과가 유지됩니다. 분석 대상으로 직접 지정한 기준 폴더
 자체는 제외하지 않고, 그 아래에서 탐색하는 디렉터리에 규칙을 적용합니다.
 
+`--exclude-file PATH`는 UTF-8 파일에서 **디렉터리 이름**을 한 줄씩 읽습니다.
+빈 줄과 앞뒤 공백, `#`으로 시작하는 주석 줄은 무시하며 UTF-8 BOM도 지원합니다.
+중복 이름은 하나로 처리하고, `--exclude-dir`과 같은 대소문자 구분·정확한 이름 일치
+규칙으로 모든 깊이의 디렉터리를 제외합니다. 같은 이름의 파일은 제외하지 않으며,
+와일드카드와 경로 패턴은 해석하지 않습니다. 줄 중간의 `#`은 이름의 일부입니다.
+
+예를 들어 `excluded-dirs.txt`를 다음과 같이 작성합니다.
+
+```text
+# 디렉터리 이름 목록
+node_modules
+cache
+cache
+```
+
+```powershell
+folder-report . --exclude-file excluded-dirs.txt
+folder-report . --exclude-file excluded-dirs.txt --exclude "*.log" --exclude-dir vendor
+python folder_report.py . --exclude-file excluded-dirs.txt --json
+```
+
+설정 파일 경로는 실행 중인 폴더를 기준으로 합니다. 목록이 비어 있으면 기존 결과를
+유지하며 설정 파일 자체는 자동 제외하지 않습니다. 파일이 없거나 읽을 수 없거나
+UTF-8이 아니면 stderr에 경로와 오류 원인을 출력하고 종료 코드 `2`를 반환합니다.
+이 경우 분석·보고서 저장을 시작하지 않으며 기존 보고서 파일도 보존합니다.
+
 `--exclude-from PATH`로 UTF-8 텍스트 파일의 제외 패턴을 읽을 수 있습니다.
 한 줄에 패턴 하나를 작성하며 앞뒤 공백, 빈 줄, `#`으로 시작하는 주석은 무시합니다.
 UTF-8 BOM이 있는 파일도 지원합니다. 줄 중간의 `#`은 패턴의 일부로 취급합니다.

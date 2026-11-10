@@ -77,8 +77,8 @@ def _is_excluded(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     )
 
 
-def read_exclude_patterns(paths: Iterable[Path]) -> list[str]:
-    """Read one pattern per line, ignoring blank lines and full-line comments."""
+def _read_exclude_lines(paths: Iterable[Path], option: str) -> list[str]:
+    """Read UTF-8 entries, ignoring blank lines and full-line comments."""
     patterns: list[str] = []
     for path in paths:
         path = path.expanduser()
@@ -89,8 +89,18 @@ def read_exclude_patterns(paths: Iterable[Path]) -> list[str]:
                     if pattern and not pattern.startswith("#"):
                         patterns.append(pattern)
         except (OSError, UnicodeError) as error:
-            raise ValueError(f"--exclude-from: Could not read {path}: {error}") from error
+            raise ValueError(f"{option}: Could not read {path}: {error}") from error
     return patterns
+
+
+def read_exclude_patterns(paths: Iterable[Path]) -> list[str]:
+    """Read patterns for the existing --exclude-from option."""
+    return _read_exclude_lines(paths, "--exclude-from")
+
+
+def read_exclude_directories(path: Path) -> set[str]:
+    """Read unique literal directory names for --exclude-file."""
+    return set(_read_exclude_lines([path], "--exclude-file"))
 
 
 def _normalize_extensions(extensions: Iterable[str]) -> set[str]:
@@ -480,6 +490,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="exclude directories with this exact case-sensitive name (repeatable; no patterns)",
     )
     parser.add_argument(
+        "--exclude-file",
+        type=Path,
+        metavar="PATH",
+        help="read exact case-sensitive directory names from a UTF-8 file (no patterns)",
+    )
+    parser.add_argument(
         "--extension",
         action="append",
         default=[],
@@ -532,8 +548,11 @@ def main() -> int:
     args = build_parser().parse_args()
     scan_root = Path(args.path).expanduser().resolve()
     exclude_patterns = list(args.exclude)
+    exclude_dirs = set(args.exclude_dir)
     try:
         exclude_patterns.extend(read_exclude_patterns(args.exclude_from))
+        if args.exclude_file is not None:
+            exclude_dirs.update(read_exclude_directories(args.exclude_file))
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2
@@ -556,7 +575,7 @@ def main() -> int:
             top=args.top,
             include_hidden=args.include_hidden,
             exclude=exclude_patterns,
-            exclude_dirs=args.exclude_dir,
+            exclude_dirs=exclude_dirs,
             extensions=args.extension,
             max_depth=args.max_depth,
             min_size=args.min_size,
