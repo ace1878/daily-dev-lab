@@ -229,6 +229,19 @@ python folder_report.py . --sort-by count
 python folder_report.py . --min-size 1048576 --exclude "*.log" --sort-by size
 ```
 
+`--min-list-size SIZE`는 기준값 이상인 파일만 큰 파일 목록에 표시합니다.
+전체 파일 수, 전체 용량, 확장자별 통계와 `--fail-over-size` 판정에는 영향을 주지
+않습니다. `--exclude`와 `--exclude-file`을 함께 사용할 수 있습니다.
+정수 바이트 또는 `B`, `KB`, `MB`, `GB`, `KiB`, `MiB`, `GiB`를 지정할 수
+있습니다. `1KB`는 1,000바이트, `1KiB`는 1,024바이트이며 대소문자를 구분하지
+않습니다. 목록 필터는 텍스트·JSON·Markdown의 큰 파일 목록에 적용됩니다.
+CSV에는 확장자별 통계만 있으므로 결과가 달라지지 않습니다.
+
+```powershell
+folder-report . --min-list-size 1MB
+python folder_report.py . --min-list-size 1KiB --exclude "*.log" --json
+```
+
 `--min-size SIZE`를 사용하면 지정한 크기 이상의 파일만 통계에 포함합니다.
 경계값과 같은 크기의 파일도 포함되며, 파일 수·전체 용량·확장자 통계·큰 파일
 목록에 같은 기준이 적용됩니다. 단위 없는 정수는 기존처럼 바이트로 처리하며,

@@ -118,19 +118,24 @@ def _normalize_extensions(extensions: Iterable[str]) -> set[str]:
     return normalized
 
 
-def parse_size(value: str) -> int:
-    """Parse a whole-number byte size with an optional binary unit."""
-    match = re.fullmatch(r"([+-]?\d+)\s*(KiB|MiB|GiB)?", value.strip(), re.IGNORECASE)
-    if not match:
+def parse_size(value: str, *, allow_decimal_units: bool = False) -> int:
+    """Parse a whole-number size, optionally accepting decimal units."""
+    units = SIZE_UNITS
+    unit_help = "KiB, MiB, or GiB"
+    if allow_decimal_units:
+        units = {**SIZE_UNITS, "b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3}
+        unit_help = "B, KB, MB, GB, KiB, MiB, or GiB"
+    match = re.fullmatch(r"([+-]?\d+)\s*([a-zA-Z]*)", value.strip())
+    if not match or match.group(2).lower() not in units:
         raise argparse.ArgumentTypeError(
-            "size must be a whole number optionally followed by KiB, MiB, or GiB"
+            f"size must be a whole number optionally followed by {unit_help}"
         )
 
     amount = int(match.group(1))
     if amount < 0:
         raise argparse.ArgumentTypeError("size must be zero or greater")
     unit = (match.group(2) or "").lower()
-    return amount * SIZE_UNITS[unit]
+    return amount * units[unit]
 
 
 def scan_folder(
@@ -144,6 +149,7 @@ def scan_folder(
     extensions: Iterable[str] = (),
     max_depth: int | None = None,
     exclude_dirs: Iterable[str] = (),
+    min_list_size: int = 0,
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -155,6 +161,8 @@ def scan_folder(
         raise ValueError("top must be zero or greater")
     if min_size < 0:
         raise ValueError("--min-size must be zero or greater")
+    if min_list_size < 0:
+        raise ValueError("--min-list-size must be zero or greater")
     if max_size is not None and max_size < 0:
         raise ValueError("--max-size must be zero or greater")
     if max_size is not None and min_size > max_size:
@@ -220,7 +228,7 @@ def scan_folder(
             file_count += 1
             total_size += size
 
-            if top:
+            if top and size >= min_list_size:
                 candidate = _HeapFile(str(path.relative_to(root)), size)
                 if len(largest_heap) < top:
                     heapq.heappush(largest_heap, candidate)
@@ -431,6 +439,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="include only files at least this size (bytes, KiB, MiB, or GiB)",
     )
     parser.add_argument(
+        "--min-list-size",
+        type=lambda value: parse_size(value, allow_decimal_units=True),
+        default=0,
+        metavar="SIZE",
+        help="minimum size for the largest-files list only (B, KB, MB, GB, KiB, MiB, GiB)",
+    )
+    parser.add_argument(
         "--max-size",
         type=parse_size,
         metavar="SIZE",
@@ -579,6 +594,7 @@ def main() -> int:
             extensions=args.extension,
             max_depth=args.max_depth,
             min_size=args.min_size,
+            min_list_size=args.min_list_size,
             max_size=args.max_size,
             sort_by=args.sort_by,
         )

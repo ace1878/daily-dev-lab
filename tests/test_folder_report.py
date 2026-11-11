@@ -676,6 +676,73 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn(f"  {blocked}", output.getvalue())
 
 
+class MinListSizeTests(unittest.TestCase):
+    def test_inclusive_threshold_changes_only_the_largest_files_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "nested"
+            nested.mkdir()
+            (root / "small.txt").write_bytes(b"x" * 999)
+            (nested / "boundary.bin").write_bytes(b"x" * 1000)
+            (root / "large.bin").write_bytes(b"x" * 1024)
+            baseline = scan_folder(root)
+            filtered = scan_folder(root, min_list_size=1000)
+            self.assertEqual((baseline.files, baseline.size), (3, 3023))
+            self.assertEqual(len(baseline.largest_files), 3)
+            self.assertEqual(filtered, replace(baseline, largest_files=[
+                FileEntry("large.bin", 1024),
+                FileEntry(str(Path("nested") / "boundary.bin"), 1000),
+            ]))
+            self.assertEqual(scan_folder(root, min_list_size=0), baseline)
+            self.assertEqual(scan_folder(root, min_list_size=1025), replace(baseline, largest_files=[]))
+
+    def test_empty_folder_preserves_empty_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(scan_folder(root, min_list_size=1000), scan_folder(root))
+
+    def test_decimal_and_binary_units(self) -> None:
+        parser = build_parser()
+        for value, expected in (
+            ("1000", 1000), ("3B", 3), ("1 kb", 1000), ("2MB", 2000000),
+            ("1GB", 1000000000), ("1KiB", 1024), ("2MiB", 2 * 1024**2),
+            ("1GiB", 1024**3),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(parser.parse_args(["--min-list-size", value]).min_list_size, expected)
+
+    def test_invalid_inputs_return_argparse_error(self) -> None:
+        parser = build_parser()
+        for value in ("1XB", "1.5KB", "-1KB"):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as error:
+                    parser.parse_args([f"--min-list-size={value}"])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--min-list-size", stderr.getvalue())
+
+    def test_cli_exclusions_and_size_limit_use_unchanged_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "small.txt").write_bytes(b"abc")
+            (root / "large.bin").write_bytes(b"x" * 1000)
+            (root / "ignored.log").write_bytes(b"x" * 1200)
+            (root / "cache").mkdir()
+            (root / "cache" / "ignored.bin").write_bytes(b"x" * 1300)
+            names = Path(directory) / "excluded.txt"
+            names.write_text("cache\n", encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch("sys.argv", [
+                "folder-report", str(root), "--min-list-size", "1KB", "--exclude", "*.log",
+                "--exclude-file", str(names), "--fail-over-size", "1001", "--json",
+            ]), redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(main(), 4)
+            report = json.loads(stdout.getvalue())
+            self.assertIn("Total size 1003 bytes exceeds limit 1001 bytes", stderr.getvalue())
+            self.assertEqual((report["files"], report["size"]), (2, 1003))
+            self.assertEqual(report["largest_files"], [{"path": "large.bin", "size": 1000}])
+
+
 class ExcludeFileTests(unittest.TestCase):
     def run_cli(self, root, *options):
         stdout, stderr = io.StringIO(), io.StringIO()
