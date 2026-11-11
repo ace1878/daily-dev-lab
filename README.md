@@ -214,6 +214,19 @@ python folder_report.py . --extension .txt --extension CSV
 python folder_report.py . --extension txt --min-size 1024 --max-size 1048576 --exclude "*.log" --sort-by size --json
 ```
 
+`--file-sort name|size`로 큰 파일 목록의 표시 순서를 선택할 수 있습니다.
+`--top N`으로 크기가 큰 파일 N개를 먼저 선정하고 해당 파일들을 정렬합니다.
+`name`은 파일 이름(디렉터리 부분 제외)의 오름차순이며, 같은 이름은 상대 경로
+오름차순으로 정렬합니다. 이름 비교는 대소문자를 구분합니다.
+기본값 `size`는 크기 내림차순이며 같은 크기는 상대 경로 오름차순입니다.
+텍스트·JSON·Markdown의 큰 파일 목록에 적용되며 CSV는 확장자별 통계를 저장합니다.
+
+```powershell
+folder-report . --top 10 --file-sort name
+python folder_report.py . --file-sort size --min-size 1KiB --json
+python folder_report.py . --file-sort name --exclude "*.log" --exclude-file excluded-dirs.txt
+```
+
 `--sort-by`로 확장자별 통계의 정렬 기준을 선택할 수 있습니다.
 
 - `extension`: 확장자 이름 오름차순(기본값)

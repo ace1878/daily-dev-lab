@@ -150,6 +150,7 @@ def scan_folder(
     max_depth: int | None = None,
     exclude_dirs: Iterable[str] = (),
     min_list_size: int = 0,
+    file_sort: str = "size",
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
@@ -171,6 +172,8 @@ def scan_folder(
         raise ValueError("--max-depth must be zero or greater")
     if sort_by not in {"extension", "size", "count"}:
         raise ValueError("--sort-by must be one of: extension, size, count")
+    if file_sort not in {"name", "size"}:
+        raise ValueError("--file-sort must be one of: name, size")
     exclude_patterns = tuple(exclude)
     excluded_directory_names = set(exclude_dirs)
     included_extensions = _normalize_extensions(extensions)
@@ -252,6 +255,8 @@ def scan_folder(
             key=lambda entry: (-entry.size, entry.path),
         )
     ]
+    if file_sort == "name":
+        largest_files.sort(key=lambda entry: (Path(entry.path).name, entry.path))
 
     return FolderReport(
         root=str(root),
@@ -463,6 +468,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="extension",
         help="sort extension statistics (default: extension)",
     )
+    parser.add_argument(
+        "--file-sort",
+        choices=("name", "size"),
+        default="size",
+        help="sort the selected top files by name or size (default: size)",
+    )
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
@@ -597,6 +608,7 @@ def main() -> int:
             min_list_size=args.min_list_size,
             max_size=args.max_size,
             sort_by=args.sort_by,
+            file_sort=args.file_sort,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr if args.quiet else sys.stdout)

@@ -676,6 +676,75 @@ class ScanFolderTests(unittest.TestCase):
             self.assertIn(f"  {blocked}", output.getvalue())
 
 
+class FileSortTests(unittest.TestCase):
+    def test_name_order_uses_basename_then_relative_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative, size in (("z/alpha.txt", 1), ("a/zeta.txt", 5),
+                                   ("b/alpha.txt", 3), ("middle.txt", 4)):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x" * size)
+            baseline = scan_folder(root)
+            report = scan_folder(root, file_sort="name")
+            expected = [str(Path(name)) for name in (
+                "b/alpha.txt", "z/alpha.txt", "middle.txt", "a/zeta.txt"
+            )]
+            self.assertEqual([item.path for item in report.largest_files], expected)
+            self.assertEqual(report, replace(baseline, largest_files=report.largest_files))
+
+    def test_size_order_and_ties_match_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, size in (("z.txt", 5), ("a.txt", 5), ("middle.txt", 3)):
+                (root / name).write_bytes(b"x" * size)
+            report = scan_folder(root, file_sort="size")
+            self.assertEqual(report, scan_folder(root))
+            self.assertEqual([item.path for item in report.largest_files], ["a.txt", "z.txt", "middle.txt"])
+
+    def test_name_sort_keeps_top_n_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, size in (("aaa.txt", 1), ("z.txt", 5), ("b.txt", 3)):
+                (root / name).write_bytes(b"x" * size)
+            report = scan_folder(root, top=2, file_sort="name")
+            self.assertEqual([item.path for item in report.largest_files], ["b.txt", "z.txt"])
+            self.assertEqual((report.files, report.size), (3, 9))
+            self.assertEqual(scan_folder(root, top=0, file_sort="name").largest_files, [])
+
+    def test_empty_folder_with_name_sort(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(scan_folder(Path(directory), file_sort="name"), scan_folder(Path(directory)))
+
+    def test_invalid_sort_is_rejected(self) -> None:
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            build_parser().parse_args(["--file-sort", "count"])
+        self.assertEqual(error.exception.code, 2)
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "--file-sort"):
+            scan_folder(Path(directory), file_sort="count")
+
+    def test_cli_combines_with_filters_and_extension_sort(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            for name, size in (("a.txt", 1024), ("z.bin", 2048), ("small.txt", 1), ("skip.log", 3000)):
+                (root / name).write_bytes(b"x" * size)
+            (root / "cache").mkdir()
+            (root / "cache" / "ignored.txt").write_bytes(b"x" * 4000)
+            config = Path(directory) / "names.txt"
+            config.write_text("cache\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.argv", [
+                "folder-report", str(root), "--file-sort", "name", "--sort-by", "size",
+                "--min-size", "1KiB", "--exclude", "*.log", "--exclude-file", str(config), "--json",
+            ]), redirect_stdout(stdout):
+                self.assertEqual(main(), 0)
+            report = json.loads(stdout.getvalue())
+            self.assertEqual([item["path"] for item in report["largest_files"]], ["a.txt", "z.bin"])
+            self.assertEqual([item["extension"] for item in report["extensions"]], [".bin", ".txt"])
+            self.assertEqual((report["files"], report["size"]), (2, 3072))
+
+
 class MinListSizeTests(unittest.TestCase):
     def test_inclusive_threshold_changes_only_the_largest_files_list(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
