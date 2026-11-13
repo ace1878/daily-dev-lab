@@ -11,6 +11,7 @@ from dataclasses import replace
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from importlib.metadata import PackageNotFoundError
+from itertools import permutations
 from unittest.mock import patch
 
 from folder_report import (
@@ -674,6 +675,117 @@ class ScanFolderTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertIn(f"  {blocked}", output.getvalue())
+
+
+class FilterSortTopBoundaryTests(unittest.TestCase):
+    def test_min_size_boundary_tie_at_top_cutoff_keeps_full_statistics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, size in (("below.txt", 1023), ("z.txt", 1024),
+                               ("a.txt", 1024), ("large.bin", 2048)):
+                (root / name).write_bytes(b"x" * size)
+            for sort_by in ("extension", "size", "count"):
+                with self.subTest(sort_by=sort_by):
+                    report = scan_folder(root, min_size=1024, top=2, sort_by=sort_by)
+                    self.assertEqual((report.files, report.size), (3, 4096))
+                    self.assertEqual(
+                        {item.extension: (item.files, item.size) for item in report.extensions},
+                        {".bin": (1, 2048), ".txt": (2, 2048)},
+                    )
+                    self.assertEqual(report.largest_files, [
+                        FileEntry("large.bin", 2048), FileEntry("a.txt", 1024),
+                    ])
+
+    def test_filtered_count_below_top_and_all_files_filtered_out(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, size in (("small.txt", 4), ("boundary.txt", 5), ("large.bin", 7)):
+                (root / name).write_bytes(b"x" * size)
+            for sort_by in ("extension", "size", "count"):
+                for file_sort in ("name", "size"):
+                    for minimum, expected in ((5, [
+                        FileEntry("boundary.txt", 5), FileEntry("large.bin", 7),
+                    ]), (8, [])):
+                        with self.subTest(sort_by=sort_by, file_sort=file_sort, minimum=minimum):
+                            report = scan_folder(
+                                root, min_size=minimum, top=10,
+                                sort_by=sort_by, file_sort=file_sort,
+                            )
+                            if file_sort == "size":
+                                expected = list(reversed(expected))
+                            self.assertEqual(report.largest_files, expected)
+                            self.assertEqual((report.files, report.size), (2, 12) if minimum == 5 else (0, 0))
+                            if minimum == 8:
+                                self.assertEqual(report.extensions, [])
+
+    def test_tied_top_selection_is_independent_of_directory_visit_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            relatives = ("a/z.txt", "b/a.txt", "c/b.txt")
+            for relative in relatives:
+                path = root / relative
+                path.parent.mkdir()
+                path.write_bytes(b"x" * 5)
+            for order in permutations(relatives):
+                for file_sort in ("size", "name"):
+                    with self.subTest(order=order, file_sort=file_sort):
+                        entries = [
+                            (str((root / relative).parent), [], [Path(relative).name])
+                            for relative in order
+                        ]
+                        with patch("folder_report.os.walk", return_value=iter(entries)):
+                            report = scan_folder(root, min_size=5, top=2, file_sort=file_sort)
+                        selected = ["a/z.txt", "b/a.txt"]
+                        if file_sort == "name":
+                            selected.reverse()
+                        self.assertEqual(report.largest_files, [
+                            FileEntry(str(Path(relative)), 5) for relative in selected
+                        ])
+                        self.assertEqual((report.files, report.size), (3, 15))
+
+    def test_cli_extension_sort_and_file_sort_with_top_are_independent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, size in (("a.txt", 5), ("b.txt", 5), ("c.bin", 10),
+                               ("d.log", 4), ("e.log", 4), ("below.dat", 3)):
+                (root / name).write_bytes(b"x" * size)
+            extension_orders = {
+                "extension": [".bin", ".log", ".txt"],
+                "size": [".bin", ".txt", ".log"],
+                "count": [".log", ".txt", ".bin"],
+            }
+            for sort_by, extensions in extension_orders.items():
+                for file_sort in ("size", "name"):
+                    with self.subTest(sort_by=sort_by, file_sort=file_sort):
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        with patch("sys.argv", [
+                            "folder-report", str(root), "--min-size", "4", "--top", "2",
+                            "--sort-by", sort_by, "--file-sort", file_sort, "--json",
+                        ]), redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(), 0)
+                        report = json.loads(stdout.getvalue())
+                        self.assertEqual(stderr.getvalue(), "")
+                        self.assertEqual((report["files"], report["size"]), (5, 28))
+                        self.assertEqual([item["extension"] for item in report["extensions"]], extensions)
+                        expected = ["c.bin", "a.txt"] if file_sort == "size" else ["a.txt", "c.bin"]
+                        self.assertEqual([item["path"] for item in report["largest_files"]], expected)
+
+    def test_empty_folder_cli_with_minimum_sort_and_top(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for sort_by in ("extension", "size", "count"):
+                for top in (0, 10):
+                    with self.subTest(sort_by=sort_by, top=top):
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        with patch("sys.argv", [
+                            "folder-report", directory, "--min-size", "1KiB",
+                            "--sort-by", sort_by, "--top", str(top), "--json",
+                        ]), redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(), 0)
+                        report = json.loads(stdout.getvalue())
+                        self.assertEqual(stderr.getvalue(), "")
+                        self.assertEqual((report["files"], report["size"]), (0, 0))
+                        self.assertEqual(report["extensions"], [])
+                        self.assertEqual(report["largest_files"], [])
 
 
 class FileSortTests(unittest.TestCase):
