@@ -71,6 +71,23 @@ Windows의 `Scripts/*.exe`와 Ubuntu의 `bin/*` 경로 차이를 자동 처리�
 
 ### 사용법
 
+`--summary-only`는 전체 파일 수·용량·확장자별 통계를 출력하고 큰 파일 목록 구역을
+생략합니다. 텍스트와 Markdown은 해당 구역 전체를 생략하고 JSON은 기존 필드를
+유지하면서 `largest_files`를 빈 배열로 저장합니다. CSV는 기존 확장자별 통계를
+그대로 저장합니다. 빈 폴더에서도 통계와 `(no files)` 표시를 확인할 수 있습니다.
+
+```powershell
+folder-report . --summary-only
+python folder_report.py . --summary-only --show-time
+python folder_report.py . --summary-only --json
+python folder_report.py . --summary-only --markdown-output summary.md
+python folder_report.py . --summary-only --quiet --json-output summary.json
+```
+
+`--quiet`과 함께 사용하면 일반 터미널 출력을 생략하고 지정한 보고서 파일을
+저장합니다. `--show-time`은 기존처럼 stderr에 표시되며 `--quiet`이면 생략합니다.
+`--show-skipped`로 요청한 접근 오류 경로 목록과 기존 종료 코드 규칙도 적용됩니다.
+
 ```powershell
 python folder_report.py C:\path\to\folder
 python folder_report.py . --top 10

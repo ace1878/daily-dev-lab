@@ -36,6 +36,116 @@ from folder_report import (
 )
 
 
+class SummaryOnlyTests(unittest.TestCase):
+    def run_cli(self, root, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder-report", str(root), *options]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_text_summary_preserves_statistics_for_regular_and_empty_folders(self) -> None:
+        for empty in (False, True):
+            with self.subTest(empty=empty), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                if not empty:
+                    (root / "notes.txt").write_bytes(b"abc")
+                baseline = self.run_cli(root)
+                code, stdout, stderr = self.run_cli(root, "--summary-only")
+                self.assertEqual(code, 0)
+                self.assertEqual(stderr, "")
+                self.assertEqual(stdout, baseline[1].split("\n\nLargest files:")[0] + "\n")
+                self.assertNotIn("Largest files:", stdout)
+                self.assertNotIn("notes.txt", stdout)
+                self.assertIn("Files: 0" if empty else "Files: 1", stdout)
+
+    def test_json_summary_keeps_schema_and_other_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "data"
+            root.mkdir()
+            (root / "small.txt").write_bytes(b"abc")
+            (root / "large.bin").write_bytes(b"12345")
+            expected = json.loads(self.run_cli(root, "--json")[1])
+            self.assertEqual(len(expected["largest_files"]), 2)
+            expected["largest_files"] = []
+            code, stdout, stderr = self.run_cli(root, "--summary-only", "--json")
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(json.loads(stdout), expected)
+            output = Path(directory) / "summary.json"
+            code, _, stderr = self.run_cli(root, "--summary-only", "--json-output", str(output))
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), expected)
+
+    def test_saved_summary_formats_with_quiet_and_timing(self) -> None:
+        for empty in (False, True):
+            for option, suffix in (("--csv", "csv"), ("--json-output", "json"), ("--markdown-output", "md")):
+                with self.subTest(empty=empty, option=option), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory) / "data"
+                    root.mkdir()
+                    if not empty:
+                        (root / "notes.txt").write_bytes(b"abc")
+                    before = Path(directory) / f"before.{suffix}"
+                    after = Path(directory) / f"after.{suffix}"
+                    self.assertEqual(self.run_cli(root, option, str(before))[0], 0)
+                    self.assertEqual(self.run_cli(
+                        root, option, str(after), "--summary-only", "--quiet", "--show-time"
+                    ), (0, "", ""))
+                    if suffix == "csv":
+                        self.assertEqual(before.read_bytes(), after.read_bytes())
+                    elif suffix == "json":
+                        expected = json.loads(before.read_text(encoding="utf-8"))
+                        expected["largest_files"] = []
+                        self.assertEqual(json.loads(after.read_text(encoding="utf-8")), expected)
+                    else:
+                        expected = before.read_text(encoding="utf-8").split("\n\n## Largest files")[0] + "\n"
+                        self.assertEqual(after.read_text(encoding="utf-8"), expected)
+                        self.assertNotIn("notes", after.read_text(encoding="utf-8"))
+
+    def test_summary_timing_is_on_stderr_and_quiet_suppresses_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("folder_report.time.perf_counter", side_effect=[10.0, 11.25]):
+                code, stdout, stderr = self.run_cli(directory, "--summary-only", "--show-time")
+            self.assertEqual(code, 0)
+            self.assertNotIn("Largest files:", stdout)
+            self.assertEqual(stderr, "Analysis time: 1.250 seconds\n")
+            with patch("folder_report.time.perf_counter") as clock:
+                self.assertEqual(self.run_cli(
+                    directory, "--summary-only", "--show-time", "--quiet"
+                ), (0, "", ""))
+                clock.assert_not_called()
+
+    def test_summary_retains_size_limit_and_top_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "notes.txt").write_bytes(b"abc")
+            code, stdout, stderr = self.run_cli(root, "--summary-only", "--fail-over-size", "2", "--json")
+            self.assertEqual(code, 4)
+            self.assertIn("Total size 3 bytes exceeds limit 2 bytes", stderr)
+            report = json.loads(stdout)
+            self.assertEqual((report["files"], report["size"], report["largest_files"]), (1, 3, []))
+            self.assertEqual(self.run_cli(root, "--summary-only", "--top", "-1")[0], 2)
+
+    def test_summary_strict_error_preserves_existing_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.md"
+            output.write_bytes(b"keep")
+            report = replace(scan_folder(root), skipped=["blocked"])
+            with patch("folder_report.scan_folder", return_value=report):
+                code, stdout, stderr = self.run_cli(
+                    root, "--summary-only", "--strict", "--markdown-output", str(output), "--force"
+                )
+            self.assertEqual((code, stdout), (3, ""))
+            self.assertIn("Strict analysis failed", stderr)
+            self.assertEqual(output.read_bytes(), b"keep")
+
+    def test_summary_keeps_requested_skipped_path_details(self) -> None:
+        report = FolderReport("sample", 0, 0, [], [], ["blocked"])
+        text = render_text(report, show_skipped=True, summary_only=True)
+        self.assertIn("Skipped paths: 1\n  blocked", text)
+        self.assertNotIn("Largest files:", text)
+
+
 class VersionTests(unittest.TestCase):
     def test_uses_installed_package_metadata(self) -> None:
         with patch("folder_report.version", return_value="9.8.7") as metadata_version:

@@ -12,7 +12,7 @@ import string
 import sys
 import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from fnmatch import fnmatch
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -278,7 +278,9 @@ def format_size(size: int) -> str:
     raise AssertionError("unreachable")
 
 
-def render_text(report: FolderReport, show_skipped: bool = False) -> str:
+def render_text(
+    report: FolderReport, show_skipped: bool = False, summary_only: bool = False
+) -> str:
     lines = [
         f"Folder: {report.root}",
         f"Files: {report.files}",
@@ -306,18 +308,19 @@ def render_text(report: FolderReport, show_skipped: bool = False) -> str:
     else:
         lines.append("  (no files)")
 
-    lines.extend(["", "Largest files:"])
-    if report.largest_files:
-        file_rows = [(format_size(item.size), item.path) for item in report.largest_files]
-        size_width = max(len("Size"), max(len(row[0]) for row in file_rows))
-        path_width = max(len("Path"), max(len(row[1]) for row in file_rows))
-        lines.extend([
-            f"  {'Size':>{size_width}}  Path",
-            f"  {'-' * size_width}  {'-' * path_width}",
-        ])
-        lines.extend(f"  {size:>{size_width}}  {path}" for size, path in file_rows)
-    else:
-        lines.append("  (no files)")
+    if not summary_only:
+        lines.extend(["", "Largest files:"])
+        if report.largest_files:
+            file_rows = [(format_size(item.size), item.path) for item in report.largest_files]
+            size_width = max(len("Size"), max(len(row[0]) for row in file_rows))
+            path_width = max(len("Path"), max(len(row[1]) for row in file_rows))
+            lines.extend([
+                f"  {'Size':>{size_width}}  Path",
+                f"  {'-' * size_width}  {'-' * path_width}",
+            ])
+            lines.extend(f"  {size:>{size_width}}  {path}" for size, path in file_rows)
+        else:
+            lines.append("  (no files)")
 
     if report.skipped:
         lines.extend(["", f"Skipped paths: {len(report.skipped)}"])
@@ -367,7 +370,7 @@ def _markdown_text(value: str) -> str:
     )
 
 
-def render_markdown(report: FolderReport) -> str:
+def render_markdown(report: FolderReport, summary_only: bool = False) -> str:
     """Render the existing report data as Markdown tables."""
     lines = [
         "# Folder Report",
@@ -388,6 +391,8 @@ def render_markdown(report: FolderReport) -> str:
         )
     else:
         lines.append("(no files)")
+    if summary_only:
+        return "\n".join(lines) + "\n"
     lines.extend(["", "## Largest files", ""])
     if report.largest_files:
         lines.extend(["| Path | Size (bytes) |", "| --- | ---: |"])
@@ -400,10 +405,12 @@ def render_markdown(report: FolderReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_markdown(report: FolderReport, output: Path, force: bool = False) -> None:
+def write_markdown(
+    report: FolderReport, output: Path, force: bool = False, summary_only: bool = False
+) -> None:
     """Save a Markdown report using UTF-8."""
     with _open_output(output, force=force) as markdown_file:
-        markdown_file.write(render_markdown(report))
+        markdown_file.write(render_markdown(report, summary_only=summary_only))
 
 
 def get_version() -> str:
@@ -436,6 +443,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("path", nargs="?", default=".", help="folder to scan (default: current folder)")
     parser.add_argument("--top", type=int, default=5, help="number of largest files to show")
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="show statistics without the detailed largest-files list",
+    )
     parser.add_argument(
         "--min-size",
         type=parse_size,
@@ -623,6 +635,9 @@ def main() -> int:
         )
         return 3
 
+    if args.summary_only:
+        report = replace(report, largest_files=[])
+
     if csv_output:
         try:
             write_csv(report, csv_output, force=args.force)
@@ -644,7 +659,9 @@ def main() -> int:
             print(f"JSON saved to: {json_output}")
     elif markdown_output:
         try:
-            write_markdown(report, markdown_output, force=args.force)
+            write_markdown(
+                report, markdown_output, force=args.force, summary_only=args.summary_only
+            )
         except OSError as error:
             print(
                 f"Error: Could not save Markdown to {markdown_output}: {error}",
@@ -656,7 +673,9 @@ def main() -> int:
     elif args.json and not args.quiet:
         print(render_json(report))
     elif not args.quiet:
-        print(render_text(report, show_skipped=args.show_skipped))
+        print(render_text(
+            report, show_skipped=args.show_skipped, summary_only=args.summary_only
+        ))
     if elapsed is not None:
         print(f"Analysis time: {elapsed:.3f} seconds", file=sys.stderr)
     if args.fail_over_size is not None and report.size > args.fail_over_size:
