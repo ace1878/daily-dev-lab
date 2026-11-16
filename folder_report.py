@@ -193,17 +193,23 @@ def scan_folder(
         if max_depth is not None and current_depth >= max_depth:
             directories.clear()
         else:
-            directories[:] = [
-                name
-                for name in directories
-                if name not in excluded_directory_names
-                and not (current_path / name).is_symlink()
-                and (
-                    include_hidden
-                    or (not name.startswith(".") and name != "__pycache__")
-                )
-                and not _is_excluded(current_path / name, root, exclude_patterns)
-            ]
+            accessible_directories = []
+            for name in directories:
+                path = current_path / name
+                if name in excluded_directory_names:
+                    continue
+                if not include_hidden and (name.startswith(".") or name == "__pycache__"):
+                    continue
+                if _is_excluded(path, root, exclude_patterns):
+                    continue
+                try:
+                    if path.is_symlink():
+                        continue
+                except OSError:
+                    skipped.append(str(path))
+                    continue
+                accessible_directories.append(name)
+            directories[:] = accessible_directories
 
         for filename in filenames:
             path = current_path / filename

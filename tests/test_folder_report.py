@@ -36,6 +36,121 @@ from folder_report import (
 )
 
 
+class DirectoryAccessErrorTests(unittest.TestCase):
+    def make_fixture(self, root):
+        (root / "good.txt").write_bytes(b"abc")
+        blocked = root / "blocked"
+        blocked.mkdir()
+        (blocked / "large.bin").write_bytes(b"x" * 100)
+        return blocked
+
+    def run_cli(self, root, blocked, *options):
+        original_symlink = Path.is_symlink
+
+        def check_symlink(path):
+            if path == blocked:
+                raise PermissionError(13, "access denied", str(path))
+            return original_symlink(path)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(Path, "is_symlink", new=check_symlink), patch(
+            "sys.argv", ["folder-report", str(root), *options]
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_directory_check_errors_are_skipped_and_subtree_is_not_visited(self) -> None:
+        for error_type in (PermissionError, OSError):
+            with self.subTest(error_type=error_type), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                blocked = self.make_fixture(root)
+                original_symlink, original_walk = Path.is_symlink, os.walk
+                visited = []
+
+                def check_symlink(path):
+                    if path == blocked:
+                        if error_type is PermissionError:
+                            raise PermissionError(13, "access denied", str(path))
+                        raise OSError(5, "I/O error", str(path))
+                    return original_symlink(path)
+
+                def walk(*args, **kwargs):
+                    for entry in original_walk(*args, **kwargs):
+                        visited.append(Path(entry[0]))
+                        yield entry
+
+                with patch.object(Path, "is_symlink", new=check_symlink), patch(
+                    "folder_report.os.walk", side_effect=walk
+                ):
+                    report = scan_folder(root)
+                self.assertEqual(visited, [root])
+                self.assertEqual((report.files, report.size), (1, 3))
+                self.assertEqual(report.extensions, [ExtensionSummary(".txt", 1, 3)])
+                self.assertEqual(report.largest_files, [FileEntry("good.txt", 3)])
+                self.assertEqual(report.skipped, [str(blocked)])
+
+    def test_default_mode_reports_successful_files_in_every_output_format(self) -> None:
+        for option, suffix in ((None, None), ("--json", None), ("--csv", "csv"),
+                               ("--json-output", "json"), ("--markdown-output", "md")):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                blocked = self.make_fixture(root)
+                output = root / f"report.{suffix}"
+                options = [option, str(output)] if suffix else [option] if option else ["--show-skipped"]
+                code, stdout, stderr = self.run_cli(root, blocked, *options)
+                self.assertEqual((code, stderr), (0, ""))
+                if option is None:
+                    self.assertIn("Files: 1", stdout)
+                    self.assertIn("Total size: 3 B", stdout)
+                    self.assertIn(f"Skipped paths: 1\n  {blocked}", stdout)
+                elif option == "--json" or suffix == "json":
+                    report = json.loads(stdout if option == "--json" else output.read_text(encoding="utf-8"))
+                    self.assertEqual((report["files"], report["size"]), (1, 3))
+                    self.assertEqual(report["skipped"], [str(blocked)])
+                    self.assertEqual(report["largest_files"], [{"path": "good.txt", "size": 3}])
+                elif suffix == "csv":
+                    with output.open(encoding="utf-8", newline="") as stream:
+                        self.assertEqual(list(csv.DictReader(stream)), [
+                            {"extension": ".txt", "files": "1", "size_bytes": "3"}
+                        ])
+                else:
+                    text = output.read_text(encoding="utf-8")
+                    self.assertIn("- Files: 1", text)
+                    self.assertIn("- Skipped paths: 1", text)
+                    self.assertNotIn("large", text)
+
+    def test_strict_mode_returns_three_and_preserves_all_report_files(self) -> None:
+        for option, suffix in (("--json", None), ("--csv", "csv"),
+                               ("--json-output", "json"), ("--markdown-output", "md")):
+            for existing in (False, True):
+                with self.subTest(option=option, existing=existing), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    blocked = self.make_fixture(root)
+                    output = root / f"report.{suffix}"
+                    if suffix and existing:
+                        output.write_bytes(b"keep")
+                    options = [option, str(output)] if suffix else [option]
+                    code, stdout, stderr = self.run_cli(root, blocked, *options, "--strict", "--force")
+                    self.assertEqual((code, stdout), (3, ""))
+                    self.assertIn("Strict analysis failed: 1 path(s)", stderr)
+                    if suffix:
+                        if existing:
+                            self.assertEqual(output.read_bytes(), b"keep")
+                        else:
+                            self.assertFalse(output.exists())
+
+    def test_excluded_or_depth_limited_directories_are_not_access_errors(self) -> None:
+        for options in (["--exclude", "blocked"], ["--exclude-dir", "blocked"], ["--max-depth", "0"]):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                blocked = self.make_fixture(root)
+                code, stdout, stderr = self.run_cli(root, blocked, *options, "--strict", "--json")
+                self.assertEqual((code, stderr), (0, ""))
+                report = json.loads(stdout)
+                self.assertEqual(report["skipped"], [])
+                self.assertEqual((report["files"], report["size"]), (1, 3))
+
+
 class SummaryOnlyTests(unittest.TestCase):
     def run_cli(self, root, *options):
         stdout, stderr = io.StringIO(), io.StringIO()
