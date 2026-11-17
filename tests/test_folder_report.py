@@ -1309,7 +1309,15 @@ class ExcludeFileTests(unittest.TestCase):
     def test_unreadable_file_reports_permission_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "names.txt"
-            with patch("pathlib.Path.open", side_effect=PermissionError("access denied")), patch(
+            config.write_text("cache\n", encoding="utf-8")
+            original_open = Path.open
+
+            def denied_open(path, *args, **kwargs):
+                if path == config:
+                    raise PermissionError(13, "access denied", str(path))
+                return original_open(path, *args, **kwargs)
+
+            with patch.object(Path, "open", new=denied_open), patch(
                 "folder_report.scan_folder"
             ) as scan:
                 code, stdout, stderr = self.run_cli(directory, "--exclude-file", str(config))
