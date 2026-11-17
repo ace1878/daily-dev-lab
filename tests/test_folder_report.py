@@ -36,6 +36,68 @@ from folder_report import (
 )
 
 
+class LiteralOutputPathTests(unittest.TestCase):
+    def run_cli(self, root, *options):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("sys.argv", ["folder-report", str(root), *options]), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_bracket_output_paths_exclude_only_the_report_on_first_and_repeat_save(self) -> None:
+        for option, suffix, writer in (
+            ("--csv", "csv", write_csv), ("--json-output", "json", write_json),
+            ("--markdown-output", "md", write_markdown),
+        ):
+            for nested in (False, True):
+                with self.subTest(option=option, nested=nested), tempfile.TemporaryDirectory() as directory:
+                    workspace = Path(directory)
+                    root = workspace / "data"
+                    root.mkdir()
+                    output_parent = root / "reports[2026]" if nested else root
+                    output_parent.mkdir(exist_ok=True)
+                    output = output_parent / f"report[1].{suffix}"
+                    (root / "notes.txt").write_bytes(b"abc")
+                    (output_parent / f"report1.{suffix}").write_bytes(b"12345")
+                    other = root / "other"
+                    other.mkdir()
+                    (other / output.name).write_bytes(b"1234567")
+                    (root / "ignored.log").write_bytes(b"x" * 11)
+                    baseline = scan_folder(root, exclude=["*.log"])
+                    self.assertEqual((baseline.files, baseline.size), (3, 15))
+                    reference = workspace / f"expected.{suffix}"
+                    writer(baseline, reference)
+                    # Exercise relative output paths as well as bracketed parent directories.
+                    relative_output = os.path.relpath(output)
+                    for flags in ([], ["--force"]):
+                        with self.subTest(flags=flags):
+                            code, stdout, stderr = self.run_cli(
+                                root, "--exclude", "*.log", option, relative_output, *flags
+                            )
+                            self.assertEqual((code, stderr), (0, ""))
+                            self.assertIn("saved to:", stdout)
+                            self.assertEqual(output.read_bytes(), reference.read_bytes())
+
+    def test_external_bracket_report_does_not_exclude_files_inside_scan_root(self) -> None:
+        for option, suffix, writer in (
+            ("--csv", "csv", write_csv), ("--json-output", "json", write_json),
+            ("--markdown-output", "md", write_markdown),
+        ):
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                root = workspace / "data"
+                root.mkdir()
+                (root / f"report[1].{suffix}").write_bytes(b"abc")
+                (root / f"report1.{suffix}").write_bytes(b"12345")
+                baseline = scan_folder(root)
+                output = workspace / f"report[1].{suffix}"
+                reference = workspace / f"expected.{suffix}"
+                writer(baseline, reference)
+                code, _, stderr = self.run_cli(root, option, str(output))
+                self.assertEqual((code, stderr), (0, ""))
+                self.assertEqual(output.read_bytes(), reference.read_bytes())
+
+
 class DirectoryAccessErrorTests(unittest.TestCase):
     def make_fixture(self, root):
         (root / "good.txt").write_bytes(b"abc")

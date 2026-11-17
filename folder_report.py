@@ -151,9 +151,11 @@ def scan_folder(
     exclude_dirs: Iterable[str] = (),
     min_list_size: int = 0,
     file_sort: str = "size",
+    output_path: Path | None = None,
 ) -> FolderReport:
     """Return a report for regular files below *root* without following links."""
     root = root.expanduser().resolve()
+    excluded_output = output_path.expanduser().resolve() if output_path is not None else None
     if not root.exists():
         raise FileNotFoundError(f"Folder not found: {root}")
     if not root.is_dir():
@@ -213,6 +215,8 @@ def scan_folder(
 
         for filename in filenames:
             path = current_path / filename
+            if path == excluded_output:
+                continue
             if not include_hidden and filename.startswith("."):
                 continue
             if _is_excluded(path, root, exclude_patterns):
@@ -606,11 +610,6 @@ def main() -> int:
         args.markdown_output.expanduser().resolve() if args.markdown_output else None
     )
     output_path = csv_output or json_output or markdown_output
-    if output_path:
-        try:
-            exclude_patterns.append(output_path.relative_to(scan_root).as_posix())
-        except ValueError:
-            pass
 
     started = time.perf_counter() if args.show_time and not args.quiet else None
     try:
@@ -627,6 +626,7 @@ def main() -> int:
             max_size=args.max_size,
             sort_by=args.sort_by,
             file_sort=args.file_sort,
+            output_path=output_path,
         )
     except (FileNotFoundError, NotADirectoryError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr if args.quiet else sys.stdout)
