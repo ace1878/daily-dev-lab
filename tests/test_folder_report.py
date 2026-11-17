@@ -338,7 +338,10 @@ class VersionTests(unittest.TestCase):
 
     def test_uninstalled_source_reads_real_project_file(self) -> None:
         expected = get_version()
-        with patch("folder_report.version", side_effect=PackageNotFoundError):
+        source_module = Path(__file__).resolve().parents[1] / "folder_report.py"
+        with patch("folder_report.version", side_effect=PackageNotFoundError), patch(
+            "folder_report.__file__", str(source_module)
+        ):
             self.assertEqual(get_version(), expected)
 
     def test_version_exits_successfully_without_scanning(self) -> None:

@@ -18,6 +18,9 @@ Python 3.10 이상이 필요합니다. 저장소 폴더에서 가상환경을 �
 설치하면 `folder-report` 명령을 사용할 수 있습니다. editable 설치에서는 소스 수정이
 바로 반영됩니다.
 
+버전 등 패키지 메타데이터를 변경한 뒤에는 `pip install -e .`를 다시 실행해
+설치 정보를 갱신합니다.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
@@ -43,7 +46,7 @@ Git 추적에서 제외합니다.
 ```powershell
 folder-report --version
 python folder_report.py --version
-# 출력 예: folder-report 0.1.0
+# 출력 예: folder-report 1.0.0
 ```
 
 설치된 도구는 `pyproject.toml`에서 생성된 패키지 메타데이터를 사용합니다.
