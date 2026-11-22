@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +17,7 @@ class JsonInspectorTests(unittest.TestCase):
             capture_output=True,
             text=True,
             encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         self.assertNotIn("Traceback", result.stderr)
         return result
@@ -191,6 +193,128 @@ class JsonInspectorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2)
                     self.assertEqual(result.stdout, "")
                     self.assertEqual(result.stderr, before.stderr)
+
+    def assert_path_result(self, data, expression, expected):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            original = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            path.write_bytes(original)
+            result = self.run_cli(path, "--path", expression)
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            self.assertEqual(result.stdout, json.dumps(expected, ensure_ascii=False) + "\n")
+            self.assertEqual(json.loads(result.stdout), expected)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_path_single_object_key(self) -> None:
+        self.assert_path_result({"user": {"name": "Alice"}}, "user", {"name": "Alice"})
+
+    def test_path_nested_object_key(self) -> None:
+        self.assert_path_result({"user": {"name": "Alice"}}, "user.name", "Alice")
+
+    def test_path_array_index(self) -> None:
+        self.assert_path_result({"skills": ["Python", "SQL"]}, "skills[0]", "Python")
+
+    def test_path_mixed_object_and_array(self) -> None:
+        self.assert_path_result({"users": [{"name": "Alice"}]}, "users[0].name", "Alice")
+
+    def test_path_consecutive_array_indices(self) -> None:
+        self.assert_path_result({"matrix": [[1, 2], [3, 4]]}, "matrix[0][1]", 2)
+
+    def test_path_root_array(self) -> None:
+        self.assert_path_result([{"name": "Alice"}], "[0].name", "Alice")
+
+    def test_path_primitive_values_are_json(self) -> None:
+        for value in ("안녕하세요", 21, 1.25, True, False, None):
+            with self.subTest(value=value):
+                self.assert_path_result({"value": value}, "value", value)
+
+    def test_path_container_values_are_json(self) -> None:
+        for value in ({"name": "Alice"}, [1, True, None], {}, []):
+            with self.subTest(value=value):
+                self.assert_path_result({"value": value}, "value", value)
+
+    def test_path_lookup_failures_have_distinct_errors_and_empty_stdout(self) -> None:
+        data = {"users": [{"name": "Alice"}], "number": 21, "object": {}}
+        cases = (
+            ("missing", "Object key not found"),
+            ("users[0].missing", "Object key not found"),
+            ("users[1]", "Array index out of range"),
+            ("users[999999999999999999999999]", "Array index out of range"),
+            ("number.name", "Type mismatch"),
+            ("number[0]", "Type mismatch"),
+            ("object[0]", "Type mismatch"),
+            ("users.name", "Type mismatch"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            original = json.dumps(data).encode("utf-8")
+            path.write_bytes(original)
+            for expression, message in cases:
+                with self.subTest(expression=expression):
+                    result = self.run_cli(path, "--path", expression)
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertIn(message, result.stderr)
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_invalid_path_syntax_and_negative_indices(self) -> None:
+        cases = (
+            "", ".users", "users.", "users..name", "users[]", "users[",
+            "users[0", "users[0]name", "users.[0]", "users[1.0]", "users[+1]",
+            "$.users", "users[*]", "users[0:1]", "users[?(@.active)]", "users['name']",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text('{"users": []}', encoding="utf-8")
+            for expression in cases:
+                with self.subTest(expression=expression):
+                    result = self.run_cli(path, "--path", expression)
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertIn("Invalid path syntax", result.stderr)
+            for expression in ("users[-1]", "[-1]", "users[-0]"):
+                with self.subTest(expression=expression):
+                    result = self.run_cli(path, "--path", expression)
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertIn("Negative array index", result.stderr)
+
+    def test_path_and_summary_are_mutually_exclusive(self) -> None:
+        result = self.run_cli("sample.json", "--path", "user", "--summary")
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertIn("not allowed with argument", result.stderr)
+        self.assertIn("--path", result.stderr)
+        self.assertIn("--summary", result.stderr)
+
+    def test_invalid_json_with_path_preserves_parsing_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid.json"
+            original = b'{"value":\n}'
+            path.write_bytes(original)
+            baseline = self.run_cli(path)
+            for expression in ("value", "users["):
+                with self.subTest(expression=expression):
+                    result = self.run_cli(path, "--path", expression)
+                    self.assertEqual((result.returncode, result.stdout), (1, ""))
+                    self.assertEqual(result.stderr, baseline.stderr)
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_read_errors_with_path_preserve_existing_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid = root / "encoding.json"
+            invalid.write_bytes(b"\xff")
+            for path in (root / "missing.json", invalid, root):
+                with self.subTest(path=path):
+                    baseline = self.run_cli(path)
+                    result = self.run_cli(path, "--path", "value")
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertEqual(result.stderr, baseline.stderr)
+
+    def test_path_does_not_emit_non_json_numeric_constants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nonfinite.json"
+            path.write_text('{"value": NaN}', encoding="utf-8")
+            result = self.run_cli(path, "--path", "value")
+            self.assertEqual((result.returncode, result.stdout), (2, ""))
+            self.assertIn("JSON compliant", result.stderr)
 
     def test_help_lists_summary(self) -> None:
         result = self.run_cli("--help")

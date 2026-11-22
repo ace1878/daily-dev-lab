@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 
@@ -39,11 +40,55 @@ def render_summary(data: object) -> str:
     return "\n".join(lines)
 
 
+def parse_path(expression: str) -> list[str | int]:
+    """Parse dot-separated keys and nonnegative bracketed array indices."""
+    key = r"[^.\[\]$*?]+"
+    index = r"\[-?[0-9]+\]"
+    if not re.fullmatch(rf"(?:{key}|{index})(?:\.{key}|{index})*", expression):
+        raise ValueError(f"Invalid path syntax: {expression!r}")
+    steps: list[str | int] = []
+    for match in re.finditer(rf"({key})|\[(-?[0-9]+)\]", expression):
+        if match.group(1) is not None:
+            steps.append(match.group(1))
+        else:
+            value = match.group(2)
+            if value.startswith("-"):
+                raise ValueError(f"Negative array index is not supported: {value}")
+            try:
+                steps.append(int(value))
+            except ValueError as error:
+                raise ValueError("Invalid path syntax: array index is too long") from error
+    return steps
+
+
+def resolve_path(data: object, steps: list[str | int]) -> object:
+    """Follow parsed keys and indices without modifying the document."""
+    current = data
+    for step in steps:
+        if isinstance(step, str):
+            if not isinstance(current, dict):
+                raise ValueError(f"Type mismatch: key {step!r} requires an object")
+            if step not in current:
+                raise ValueError(f"Object key not found: {step!r}")
+        else:
+            if not isinstance(current, list):
+                raise ValueError(f"Type mismatch: index {step} requires an array")
+            if step >= len(current):
+                raise ValueError(f"Array index out of range: {step} (length {len(current)})")
+        current = current[step]
+    return current
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", help="UTF-8 JSON file to validate")
-    parser.add_argument(
+    output_options = parser.add_mutually_exclusive_group()
+    output_options.add_argument(
         "--summary", action="store_true", help="show root type, root count, and maximum container depth"
+    )
+    output_options.add_argument(
+        "--path", dest="query_path", metavar="PATH",
+        help="print the JSON value at a dot/bracket path, such as users[0].name",
     )
     args = parser.parse_args(argv)
 
@@ -65,6 +110,16 @@ def main(argv: list[str] | None = None) -> int:
     except (RecursionError, ValueError) as error:
         print(f"Cannot validate JSON: {args.path}: {error}", file=sys.stderr)
         return 2
+
+    if args.query_path is not None:
+        try:
+            value = resolve_path(data, parse_path(args.query_path))
+            output = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        except (ValueError, RecursionError) as error:
+            print(f"Path error: {error}", file=sys.stderr)
+            return 2
+        print(output)
+        return 0
 
     print(f"Valid JSON: {args.path}")
     if args.summary:
