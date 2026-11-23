@@ -40,6 +40,29 @@ def render_summary(data: object) -> str:
     return "\n".join(lines)
 
 
+def count_types(data: object) -> dict[str, int]:
+    """Count every JSON value, including containers but excluding object keys."""
+    counts = {"object": 0, "array": 0, "string": 0, "number": 0, "boolean": 0, "null": 0}
+    pending = [data]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            counts["object"] += 1
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            counts["array"] += 1
+            pending.extend(value)
+        elif isinstance(value, str):
+            counts["string"] += 1
+        elif isinstance(value, bool):
+            counts["boolean"] += 1
+        elif value is None:
+            counts["null"] += 1
+        else:
+            counts["number"] += 1
+    return counts
+
+
 def parse_path(expression: str) -> list[str | int]:
     """Parse dot-separated keys and nonnegative bracketed array indices."""
     key = r"[^.\[\]$*?]+"
@@ -90,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
         "--path", dest="query_path", metavar="PATH",
         help="print the JSON value at a dot/bracket path, such as users[0].name",
     )
+    output_options.add_argument(
+        "--stats", action="store_true", help="count all JSON values by type",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -124,6 +150,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Valid JSON: {args.path}")
     if args.summary:
         print(render_summary(data))
+    elif args.stats:
+        counts = count_types(data)
+        print("Type counts:")
+        for name, count in counts.items():
+            print(f"  {name}: {count}")
+        print(f"Total values: {sum(counts.values())}")
     return 0
 
 

@@ -316,6 +316,102 @@ class JsonInspectorTests(unittest.TestCase):
             self.assertEqual((result.returncode, result.stdout), (2, ""))
             self.assertIn("JSON compliant", result.stderr)
 
+    def assert_stats_result(self, data, expected):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            original = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            path.write_bytes(original)
+            result = self.run_cli(path, "--stats")
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            names = ("object", "array", "string", "number", "boolean", "null")
+            lines = [f"Valid JSON: {path}", "Type counts:"]
+            lines.extend(f"  {name}: {count}" for name, count in zip(names, expected))
+            lines.append(f"Total values: {sum(expected)}")
+            self.assertEqual(result.stdout, "\n".join(lines) + "\n")
+            reported_counts = [int(line.rsplit(": ", 1)[1]) for line in result.stdout.splitlines()[2:8]]
+            reported_total = int(result.stdout.splitlines()[-1].rsplit(": ", 1)[1])
+            self.assertEqual(sum(reported_counts), reported_total)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_stats_mixed_types(self) -> None:
+        data = {"name": "Alice", "age": 21, "skills": ["Python", "SQL"], "active": True, "extra": None}
+        self.assert_stats_result(data, (1, 1, 3, 1, 1, 1))
+
+    def test_stats_nested_containers(self) -> None:
+        self.assert_stats_result({"first": [{}, [None, {"value": 2}]], "empty": []}, (3, 3, 0, 1, 0, 1))
+
+    def test_stats_empty_containers(self) -> None:
+        for data, expected in (({}, (1, 0, 0, 0, 0, 0)), ([], (0, 1, 0, 0, 0, 0))):
+            with self.subTest(data=data):
+                self.assert_stats_result(data, expected)
+
+    def test_stats_root_primitives_are_included(self) -> None:
+        for data, expected in (
+            ("hello", (0, 0, 1, 0, 0, 0)),
+            (21, (0, 0, 0, 1, 0, 0)), (1.25, (0, 0, 0, 1, 0, 0)),
+            (True, (0, 0, 0, 0, 1, 0)), (False, (0, 0, 0, 0, 1, 0)),
+            (None, (0, 0, 0, 0, 0, 1)),
+        ):
+            with self.subTest(data=data):
+                self.assert_stats_result(data, expected)
+
+    def test_stats_booleans_are_not_numbers(self) -> None:
+        self.assert_stats_result([True, False, 0, 1, 1.25], (0, 1, 0, 3, 2, 0))
+
+    def test_stats_object_keys_are_not_strings(self) -> None:
+        self.assert_stats_result({"string_key": 0, "another_key": False}, (1, 0, 0, 1, 1, 0))
+
+    def test_stats_conflicts_with_summary_and_path(self) -> None:
+        for options in (("--stats", "--summary"), ("--summary", "--stats"),
+                        ("--stats", "--path", "value"), ("--path", "value", "--stats")):
+            with self.subTest(options=options):
+                result = self.run_cli("sample.json", *options)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertIn("not allowed with argument", result.stderr)
+                self.assertIn("--stats", result.stderr)
+
+    def test_stats_invalid_json_keeps_original_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid.json"
+            original = b'{"value":\n}'
+            path.write_bytes(original)
+            baseline = self.run_cli(path)
+            result = self.run_cli(path, "--stats")
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertEqual(result.stderr, baseline.stderr)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_stats_read_errors_keep_original_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid = root / "encoding.json"
+            invalid.write_bytes(b"\xff")
+            for path in (root / "missing.json", invalid, root):
+                with self.subTest(path=path):
+                    baseline = self.run_cli(path)
+                    result = self.run_cli(path, "--stats")
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertEqual(result.stderr, baseline.stderr)
+
+    def test_stats_omitted_preserves_other_output_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text('{"values": [1, true, null]}', encoding="utf-8")
+            for options, expected in (
+                ([], f"Valid JSON: {path}\n"),
+                (["--summary"], f"Valid JSON: {path}\nRoot type: object\nRoot keys: 1\nMax depth: 2\n"),
+                (["--path", "values[1]"], "true\n"),
+            ):
+                with self.subTest(options=options):
+                    result = self.run_cli(path, *options)
+                    self.assertEqual((result.returncode, result.stderr), (0, ""))
+                    self.assertEqual(result.stdout, expected)
+
+    def test_help_lists_stats(self) -> None:
+        result = self.run_cli("--help")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn("--stats", result.stdout)
+
     def test_help_lists_summary(self) -> None:
         result = self.run_cli("--help")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
