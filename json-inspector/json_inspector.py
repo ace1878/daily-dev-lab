@@ -9,20 +9,21 @@ import re
 import sys
 
 
-def render_summary(data: object) -> str:
+def summarize(data: object) -> dict[str, str | int]:
     """Describe the root and count only object/array nesting levels."""
+    summary: dict[str, str | int]
     if isinstance(data, dict):
-        lines = ["Root type: object", f"Root keys: {len(data)}"]
+        summary = {"root_type": "object", "root_keys": len(data)}
     elif isinstance(data, list):
-        lines = ["Root type: array", f"Root items: {len(data)}"]
+        summary = {"root_type": "array", "root_items": len(data)}
     elif isinstance(data, str):
-        lines = ["Root type: string"]
+        summary = {"root_type": "string"}
     elif isinstance(data, bool):
-        lines = ["Root type: boolean"]
+        summary = {"root_type": "boolean"}
     elif data is None:
-        lines = ["Root type: null"]
+        summary = {"root_type": "null"}
     else:
-        lines = ["Root type: number"]
+        summary = {"root_type": "number"}
 
     max_depth = 0
     pending = []
@@ -36,7 +37,18 @@ def render_summary(data: object) -> str:
             if isinstance(child, (dict, list)):
                 pending.append((child, depth + 1))
 
-    lines.append(f"Max depth: {max_depth}")
+    summary["max_depth"] = max_depth
+    return summary
+
+
+def render_summary(data: object) -> str:
+    summary = summarize(data)
+    lines = [f"Root type: {summary['root_type']}"]
+    if "root_keys" in summary:
+        lines.append(f"Root keys: {summary['root_keys']}")
+    if "root_items" in summary:
+        lines.append(f"Root items: {summary['root_items']}")
+    lines.append(f"Max depth: {summary['max_depth']}")
     return "\n".join(lines)
 
 
@@ -116,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     output_options.add_argument(
         "--stats", action="store_true", help="count all JSON values by type",
     )
+    parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(argv)
 
     try:
@@ -145,6 +158,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Path error: {error}", file=sys.stderr)
             return 2
         print(output)
+        return 0
+
+    if args.json:
+        report: dict[str, object] = {"valid": True}
+        if args.summary:
+            report.update(summarize(data))
+        elif args.stats:
+            counts = count_types(data)
+            report.update(type_counts=counts, total_values=sum(counts.values()))
+        print(json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2))
         return 0
 
     print(f"Valid JSON: {args.path}")

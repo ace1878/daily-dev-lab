@@ -407,6 +407,97 @@ class JsonInspectorTests(unittest.TestCase):
                     self.assertEqual((result.returncode, result.stderr), (0, ""))
                     self.assertEqual(result.stdout, expected)
 
+    def assert_json_report(self, data, expected, *options):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            original = ("  " + json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+            path.write_bytes(original)
+            result = self.run_cli(path, *options, "--json")
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            self.assertEqual(json.loads(result.stdout), expected)
+            self.assertEqual(result.stdout, json.dumps(expected, ensure_ascii=False, indent=2) + "\n")
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_json_validation_output(self) -> None:
+        self.assert_json_report({"value": "한글"}, {"valid": True})
+
+    def test_json_summary_for_objects_and_arrays(self) -> None:
+        for data, expected in (
+            ({"nested": [{"items": []}], "flag": True},
+             {"root_type": "object", "root_keys": 2, "max_depth": 4}),
+            ([{"value": False}, []], {"root_type": "array", "root_items": 2, "max_depth": 2}),
+            ({}, {"root_type": "object", "root_keys": 0, "max_depth": 1}),
+            ([], {"root_type": "array", "root_items": 0, "max_depth": 1}),
+        ):
+            with self.subTest(data=data):
+                self.assert_json_report(data, {"valid": True, **expected}, "--summary")
+
+    def test_json_summary_for_primitive_roots(self) -> None:
+        for data, root_type in (("한글", "string"), (21, "number"), (1.5, "number"),
+                                (True, "boolean"), (False, "boolean"), (None, "null")):
+            with self.subTest(data=data):
+                self.assert_json_report(
+                    data, {"valid": True, "root_type": root_type, "max_depth": 0}, "--summary"
+                )
+
+    def test_json_stats_counts_and_total(self) -> None:
+        data = {"name": "Alice", "age": 21, "skills": ["Python", "SQL"], "active": True}
+        self.assert_json_report(data, {
+            "valid": True,
+            "type_counts": {"object": 1, "array": 1, "string": 3, "number": 1, "boolean": 1, "null": 0},
+            "total_values": 7,
+        }, "--stats")
+
+    def test_json_option_order_and_path_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.json"
+            path.write_text('{"value": ["한글", true]}', encoding="utf-8")
+            for mode in ((), ("--summary",), ("--stats",), ("--path", "value")):
+                with self.subTest(mode=mode):
+                    before = self.run_cli("--json", *mode, path)
+                    after = self.run_cli(path, *mode, "--json")
+                    self.assertEqual((before.returncode, before.stderr), (0, ""))
+                    self.assertEqual((after.returncode, after.stderr), (0, ""))
+                    self.assertEqual(before.stdout, after.stdout)
+                    json.loads(after.stdout)
+                    if mode == ("--path", "value"):
+                        self.assertEqual(after.stdout, self.run_cli(path, *mode).stdout)
+                        self.assertEqual(json.loads(after.stdout), ["한글", True])
+
+    def test_json_keeps_analysis_options_mutually_exclusive(self) -> None:
+        for mode in (("--summary", "--stats"), ("--summary", "--path", "value"),
+                     ("--stats", "--path", "value")):
+            with self.subTest(mode=mode):
+                result = self.run_cli("sample.json", "--json", *mode)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertIn("not allowed with argument", result.stderr)
+
+    def test_json_errors_match_existing_stderr_and_exit_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "invalid.json").write_text('{"value":\n}', encoding="utf-8")
+            (root / "encoding.json").write_bytes(b"\xff")
+            (root / "valid.json").write_text('{"value": []}', encoding="utf-8")
+            for path, options, code in (
+                (root / "invalid.json", (), 1),
+                (root / "missing.json", (), 2),
+                (root / "encoding.json", (), 2),
+                (root, (), 2),
+                (root / "valid.json", ("--path", "missing"), 2),
+                (root / "valid.json", ("--path", "value[0]"), 2),
+            ):
+                with self.subTest(path=path, options=options):
+                    baseline = self.run_cli(path, *options)
+                    result = self.run_cli(path, *options, "--json")
+                    self.assertEqual((result.returncode, result.stdout), (code, ""))
+                    self.assertTrue(result.stderr)
+                    self.assertEqual(result.stderr, baseline.stderr)
+
+    def test_help_lists_json(self) -> None:
+        result = self.run_cli("--help")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn("--json", result.stdout)
+
     def test_help_lists_stats(self) -> None:
         result = self.run_cli("--help")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
