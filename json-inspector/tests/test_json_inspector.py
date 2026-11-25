@@ -308,13 +308,79 @@ class JsonInspectorTests(unittest.TestCase):
                     self.assertEqual((result.returncode, result.stdout), (2, ""))
                     self.assertEqual(result.stderr, baseline.stderr)
 
-    def test_path_does_not_emit_non_json_numeric_constants(self) -> None:
+    def test_path_rejects_nonstandard_constant_at_load_time(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nonfinite.json"
             path.write_text('{"value": NaN}', encoding="utf-8")
             result = self.run_cli(path, "--path", "value")
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertEqual(
+                result.stderr, f"Invalid JSON: {path}: Non-standard numeric constant: NaN\n"
+            )
+
+    def assert_invalid_constant(self, source, constant, *options) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nonstandard.json"
+            original = source.encode("utf-8")
+            path.write_bytes(original)
+            result = self.run_cli(path, *options)
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertEqual(
+                result.stderr, f"Invalid JSON: {path}: Non-standard numeric constant: {constant}\n"
+            )
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_rejects_all_nonstandard_constants_at_root(self) -> None:
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                self.assert_invalid_constant(constant, constant)
+
+    def test_rejects_nonstandard_constants_in_containers(self) -> None:
+        for source, constant in (
+            ('{"value": Infinity}', "Infinity"),
+            ("[NaN]", "NaN"),
+            ('{"items": [1, {"value": -Infinity}]}', "-Infinity"),
+        ):
+            with self.subTest(source=source):
+                self.assert_invalid_constant(source, constant)
+
+    def test_all_modes_reject_nonstandard_constants_outside_the_queried_path(self) -> None:
+        source = '{"selected": true, "other": [NaN]}'
+        for mode in ((), ("--summary",), ("--stats",), ("--path", "selected")):
+            for output in ((), ("--json",)):
+                with self.subTest(options=mode + output):
+                    self.assert_invalid_constant(source, "NaN", *mode, *output)
+
+    def test_quoted_constant_names_are_valid_strings(self) -> None:
+        for data, expression, expected in (
+            ({"value": "NaN"}, "value", "NaN"),
+            (["Infinity", "-Infinity"], "[1]", "-Infinity"),
+        ):
+            with self.subTest(data=data):
+                self.assert_path_result(data, expression, expected)
+
+    def test_standard_numeric_literals_are_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "numbers.json"
+            original = b'{"values": [0, -21, 1.25, -1.25e10, 2E-3]}'
+            path.write_bytes(original)
+            result = self.run_cli(path, "--path", "values", "--json")
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+            self.assertEqual(json.loads(result.stdout), [0, -21, 1.25, -1.25e10, 0.002])
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_float_overflow_still_validates_but_cannot_be_serialized_as_path_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "overflow.json"
+            original = b'{"value": 1e400}'
+            path.write_bytes(original)
+            validation = self.run_cli(path, "--json")
+            self.assertEqual((validation.returncode, validation.stderr), (0, ""))
+            self.assertEqual(json.loads(validation.stdout), {"valid": True})
+            result = self.run_cli(path, "--path", "value")
             self.assertEqual((result.returncode, result.stdout), (2, ""))
             self.assertIn("JSON compliant", result.stderr)
+            self.assertEqual(path.read_bytes(), original)
 
     def assert_stats_result(self, data, expected):
         with tempfile.TemporaryDirectory() as directory:

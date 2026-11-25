@@ -32,12 +32,15 @@ jobs:
       - name: Check CLI entry point
         run: folder-report --help
 
-      - name: Run tests
+      - name: Run folder-report tests
         # Avoid Windows short user-profile paths (RUNNER~1) in test fixtures.
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
         run: python -m unittest discover -s tests -v
+
+      - name: Run JSON Inspector tests
+        run: python -m unittest discover -s json-inspector/tests -v
 
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist

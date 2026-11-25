@@ -114,6 +114,14 @@ def resolve_path(data: object, steps: list[str | int]) -> object:
     return current
 
 
+class NonStandardConstantError(ValueError):
+    """An explicit non-standard numeric constant appeared in the input."""
+
+
+def reject_nonstandard_constant(constant: str) -> None:
+    raise NonStandardConstantError(f"Non-standard numeric constant: {constant}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", help="UTF-8 JSON file to validate")
@@ -133,12 +141,15 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with Path(args.path).open(encoding="utf-8") as source:
-            data = json.load(source)
+            data = json.load(source, parse_constant=reject_nonstandard_constant)
     except json.JSONDecodeError as error:
         print(
             f"Invalid JSON: {args.path} (line {error.lineno}, column {error.colno}): {error.msg}",
             file=sys.stderr,
         )
+        return 1
+    except NonStandardConstantError as error:
+        print(f"Invalid JSON: {args.path}: {error}", file=sys.stderr)
         return 1
     except UnicodeDecodeError as error:
         print(f"Cannot read JSON: {args.path}: invalid UTF-8 ({error.reason})", file=sys.stderr)
