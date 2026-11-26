@@ -47,3 +47,17 @@ jobs:
 
       - name: Verify isolated wheel installation
         run: python scripts/verify_wheel.py
+
+      - name: Build JSON Inspector wheel
+        run: python -m pip wheel ./json-inspector --no-deps --wheel-dir dist/json-inspector
+
+      - name: Install JSON Inspector wheel
+        shell: bash
+        run: python -m pip install --no-index --no-deps dist/json-inspector/json_inspector-*.whl
+
+      - name: Verify JSON Inspector CLI entry point
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          json-inspector --help
+          json-inspector --version

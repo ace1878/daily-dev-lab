@@ -9,6 +9,9 @@ import re
 import sys
 
 
+__version__ = "1.0.0"
+
+
 def summarize(data: object) -> dict[str, str | int]:
     """Describe the root and count only object/array nesting levels."""
     summary: dict[str, str | int]
@@ -124,6 +127,10 @@ def reject_nonstandard_constant(constant: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--version", action="version", version=f"json-inspector {__version__}",
+        help="show the package version and exit",
+    )
     parser.add_argument("path", help="UTF-8 JSON file to validate")
     output_options = parser.add_mutually_exclusive_group()
     output_options.add_argument(

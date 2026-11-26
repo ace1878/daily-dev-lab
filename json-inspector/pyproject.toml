@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "json-inspector"
+dynamic = ["version"]
+description = "A command-line tool to validate and inspect UTF-8 JSON files"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[project.scripts]
+json-inspector = "json_inspector:main"
+
+[tool.setuptools]
+py-modules = ["json_inspector"]
+
+[tool.setuptools.dynamic]
+version = {attr = "json_inspector.__version__"}

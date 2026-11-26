@@ -22,6 +22,12 @@ class JsonInspectorTests(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         return result
 
+    def test_version_without_file_argument(self) -> None:
+        result = self.run_cli("--version")
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr), (0, "json-inspector 1.0.0\n", "")
+        )
+
     def test_valid_object_and_original_contents_are_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample.json"

@@ -8,7 +8,7 @@
 | 프로젝트 | 상태 | 내용 |
 | --- | --- | --- |
 | Project 01 · folder-report | Released · v1.0.0 | 폴더의 파일 수·용량·확장자별 통계를 분석하는 Python CLI |
-| Project 02 · JSON Inspector | Planned | 다음 미니 프로젝트로 계획 중 |
+| Project 02 · JSON Inspector | v1.0.0 출시 준비 중 | JSON 유효성 검사·구조 요약·경로 조회·자료형 통계 Python CLI |
 
 ## Project 01 · folder-report v1.0.0
 
@@ -58,4 +58,12 @@ GitHub Actions는 `main` push와 pull request에서 Ubuntu·Windows, Python 3.12
 
 ## Project 02 · JSON Inspector
 
-**Planned** — 현재 계획 단계입니다.
+UTF-8 JSON 파일 하나를 검사하고 구조 요약, 경로별 값 조회, 자료형별 통계를
+제공합니다. 기계 판독용 JSON 출력도 지원합니다.
+
+```powershell
+python -m pip install ./json-inspector
+json-inspector --help
+```
+
+[설치·사용·테스트 안내](https://github.com/ace1878/daily-dev-lab/blob/main/json-inspector/README.md)
